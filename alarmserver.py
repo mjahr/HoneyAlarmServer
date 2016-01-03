@@ -428,6 +428,7 @@ class EnvisalinkClient(LineOnlyReceiver):
         # Convert from hex to binary
         beBin = bin(int(beHex, 16))[2:].zfill(64)
 
+        timeStr = self.getTimeText()
         for zoneNumber in range(1,65):
             # zone numbers are 1-indexed.  big-endian means zone 1 is the last bit
             zoneBit = beBin[64 - zoneNumber]
@@ -442,10 +443,11 @@ class EnvisalinkClient(LineOnlyReceiver):
             logging.debug(logmessage)
             if ALARMSTATE['zone'][zoneNumber]['status'] != zoneStatus:
                 logging.info("zone state change: " + logmessage)
+
                 ALARMSTATE['zone'][zoneNumber].update({
-                    'message': 'Recently ' + zoneStatus,
+                    'message': ("%s at %s" % zoneStatus, timeStr),
                     'status': zoneStatus, 'closedSeconds': 0,
-                    'lastChanged': self.getTimeText()
+                    'lastChanged': timeStr
                 })
 
         # Send to plugin
@@ -586,6 +588,7 @@ class EnvisalinkClient(LineOnlyReceiver):
     # close all zones and send a zone status update if necessary
     def closeAllZones(self):
         numChanged = 0
+        timeStr = self.getTimeText()
         for zoneNumber, zoneInfo in ALARMSTATE['zone'].items():
             if zoneInfo['status'] != 'closed':
                 ++numChanged
@@ -593,10 +596,10 @@ class EnvisalinkClient(LineOnlyReceiver):
                 logging.info("zone state change: %s (zone %i) %s",
                              zoneName, zoneNumber, zoneInfo)
                 ALARMSTATE['zone'][zoneNumber].update({
-                    'message': 'Recently closed',
+                    'message': 'closed at ' + timeStr,
                     'status': 'closed',
                     'closedSeconds': 0,
-                    'lastChanged': self.getTimeText()
+                    'lastChanged': timeStr
                 })
 
         if numChanged > 0:
