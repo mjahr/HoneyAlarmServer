@@ -30,7 +30,7 @@ from baseConfig import BaseConfig
 from datetime import datetime
 from datetime import timedelta
 
-ALARMSTATE = {'version': 0.2, 'arm': False, 'disarm': False, 'cancel': False}
+ALARMSTATE = {}
 MAXPARTITIONS = 16
 MAXZONES = 128
 MAXALARMUSERS = 47
@@ -116,26 +116,40 @@ class AlarmServerConfig(BaseConfig):
                                                           False, 'str', True)
 
     def initialize_alarmstate(self):
-        ALARMSTATE['zone'] = {'lastevents': []}
+        ALARMSTATE['zone'] = {}
         for zoneNumber in self.ZONENAMES.keys():
             zoneName = self.ZONENAMES[zoneNumber]
             if not zoneName: continue
-            ALARMSTATE['zone'][zoneNumber] = {'name': zoneName, 'lastevents': [],
-                                              'lastfault': 'Last Closed longer ago than I can remember',
-                                              'status': {'open': False, 'fault': False, 'alarm': False, 'tamper': False}
-                                              }
+            ALARMSTATE['zone'][zoneNumber] = {
+                'name': zoneName,
+                'message': 'uninitialized',
+                'status': 'uninitialized',
+                'closedSeconds': -1,
+                'lastChanged': 'never'
+            }
 
-        ALARMSTATE['partition'] = {'lastevents': []}
+        ALARMSTATE['partition'] = {}
         for pNumber in self.PARTITIONNAMES.keys():
             pName = self.PARTITIONNAMES[pNumber]
             if not pName: continue
-            ALARMSTATE['partition'][pNumber] = {'name': pName, 'lastevents': [],
-                                                'lastfault': 'Last Closed longer ago than I can remember',
-                                                'status': {'alarm': False, 'alarm_in_memory': False, 'armed_away': False,
-                                                           'ac_present': False, 'armed_bypass': False, 'chime': False,
-                                                           'armed_zero_entry_delay': False, 'alarm_fire_zone': False,
-                                                           'trouble': False, 'ready': False, 'fire': False,
-                                                           'armed_stay': False, 'alpha': False, 'beep': False}}
+            ALARMSTATE['partition'][pNumber] = {
+                'name': pName,
+                'message': 'uninitialized',
+                'beep': 'uninitialized',
+                'alarm': False,
+                'alarm_in_memory': False,
+                'armed_away': False,
+                'ac_present': False,
+                'bypass': False,
+                'chime': False,
+                'armed_max': False,
+                'alarm_fire': False,
+                'system_trouble': False,
+                'ready': False,
+                'fire': False,
+                'low_battery': False,
+                'armed_stay': False
+            }
 
 
 class EnvisalinkClientFactory(ReconnectingClientFactory):
@@ -197,9 +211,9 @@ class EnvisalinkClient(LineOnlyReceiver):
         self._commandinprogress = False
         now = datetime.now()
         self._lastkeypadupdate = now
-        self._lastpoll = now
-        self._lastzonedump = now
-        self._lastpartitionupdate = now
+        self._lastpoll = datetime.min
+        self._lastzonedump = datetime.min
+        self._lastpartitionupdate = datetime.min
         self._lastcommand = now
         self._lastcommandresponse = now
 
@@ -369,111 +383,125 @@ class EnvisalinkClient(LineOnlyReceiver):
         beep = evl_Virtual_Keypad_How_To_Beep.get(dataList[3], 'unknown')
         alpha = dataList[4]
 
-        ALARMSTATE['partition'][partitionNumber]['status'].update({'alarm': bool(flags.alarm), 'alarm_in_memory': bool(flags.alarm_in_memory), 'armed_away': bool(flags.armed_away),
-                                                                   'ac_present': bool(flags.ac_present), 'armed_bypass': bool(flags.bypass), 'chime': bool(flags.chime),
-                                                                   'armed_zero_entry_delay': bool(flags.armed_zero_entry_delay), 'alarm_fire_zone': bool(flags.alarm_fire_zone),
-                                                                   'trouble': bool(flags.system_trouble), 'ready': bool(flags.ready), 'fire': bool(flags.fire),
-                                                                   'armed_stay': bool(flags.armed_stay),
-                                                                   'alpha': alpha,
-                                                                   'beep': beep,
-                                                                   })
+        if partitionNumber not in ALARMSTATE['partition']:
+            logging.debug("Skipping partition %d", partitionNumber)
+            return
 
-        # if we have never yet received a partition state changed event,  we
-        # need to compute the armed state ourselves. Don't want to always do
-        # it here because we can't also figure out if we are in entry/exit
-        # delay from here
-        if not self._has_partition_state_changed:
-            armed = bool(flags.armed_away or flags.armed_zero_entry_delay or flags.armed_stay)
-            ALARMSTATE.update({'arm': not armed, 'disarm': armed})
-            ALARMSTATE['partition'][partitionNumber]['status'].update({'armed': armed})
+        newStatus = {
+            'alarm': bool(flags.alarm),
+            'alarm_in_memory': bool(flags.alarm_in_memory),
+            'armed_away': bool(flags.armed_away),
+            'ac_present': bool(flags.ac_present),
+            'bypass': bool(flags.bypass),
+            'chime': bool(flags.chime),
+            'armed_max': bool(flags.armed_zero_entry_delay),
+            'alarm_fire': bool(flags.alarm_fire_zone),
+            'system_trouble': bool(flags.system_trouble),
+            'ready': bool(flags.ready),
+            'fire': bool(flags.fire),
+            'low_battery': bool(flags.low_battery),
+            'armed_stay': bool(flags.armed_stay),
+            'beep': beep,
+            'message': alpha
+         }
 
         now = datetime.now()
         delta = now - self._lastpartitionupdate
-        if delta > timedelta(seconds=self._config.ENVISAKEYPADUPDATEINTERVAL) and not self._commandinprogress:
+        if delta < timedelta(seconds=self._config.ENVISAKEYPADUPDATEINTERVAL):
+            logging.debug('Skipping keypad update within update interval')
+        elif self._commandinprogress:
+            logging.error('Skipping keypad update because of command in progress')
+        else:
             self._lastpartitionupdate = now
-            dscCode = ''
-            if flags.alarm or flags.alarm_fire_zone or flags.fire:
-                dscCode = 'IN_ALARM'
-            elif flags.system_trouble:
-                dscCode = 'NOT_READY'
-            elif flags.ready:
-                dscCode = 'READY'
-            elif flags.bypass:
-                dscCode = 'READY_BYPASS'
-            elif flags.armed_stay:
-                dscCode = 'ARMED_STAY'
-            elif flags.armed_away:
-                dscCode = 'ARMED_AWAY'
-            elif flags.armed_zero_entry_delay:
-                dscCode = 'ARMED_MAX'
+            logging.debug("keypad_update: zone " + userOrZone);
+            self.setPartitionStatus(partitionNumber, newStatus)
 
-            for plugin in self.plugins:
-                plugin.partitionStatus(partitionNumber, dscCode)
-
-        #logging.debug(json.dumps(ALARMSTATE))
+        # TODO: update zone state based on userOrZone
 
     def handle_zone_state_change(self, data):
         # Envisalink TPI is inconsistent at generating these
-        bigEndianHexString = ''
-        # every four characters
-        inputItems = re.findall('....', data)
-        for inputItem in inputItems:
-            # Swap the couples of every four bytes
-            # (little endian to big endian)
-            swapedBytes = []
-            swapedBytes.insert(0, inputItem[0:2])
-            swapedBytes.insert(0, inputItem[2:4])
 
-            # add swapped set of four bytes to our return items,
-            # converting from hex to int
-            bigEndianHexString += ''.join(swapedBytes)
+        # Data is an 64-bit number in hex, little endian: 8 2-char bytes.
+        leHex = data
+        # Convert from little-endian to big-endian by reversing the order of the bytes
+        beHex = "".join([leHex[2*i]+leHex[2*i+1] for i in range(7,-1,-1)])
+        # Convert from hex to binary
+        beBin = bin(int(beHex, 16))[2:].zfill(64)
 
-        # convert hex string to 64 bit bitstring
-        bitfieldString = str(bin(int(bigEndianHexString, 16))[2:].zfill(64))
-
-        # reverse every 16 bits so "lowest" zone is on the left
-        zonefieldString = ''
-        inputItems = re.findall('.' * 16, bitfieldString)
-        for inputItem in inputItems:
-            zonefieldString += inputItem[::-1]
-
-        for zoneNumber, zoneBit in enumerate(zonefieldString, start=1):
+        for zoneNumber in range(1,65):
+            # zone numbers are 1-indexed.  big-endian means zone 1 is the last bit
+            zoneBit = beBin[64 - zoneNumber]
+            zoneStatus = 'open' if zoneBit == '1' else 'closed'
             zoneName = self._config.ZONENAMES[zoneNumber]
-            if zoneName:    # defined in config with name (i.e. we care about it?)
-                ALARMSTATE['zone'][zoneNumber]['status'].update({'open': zoneBit == '1', 'fault': zoneBit == '1'})
-                logging.debug("%s (zone %i) is %s", zoneName, zoneNumber, "Open/Faulted" if zoneBit == '1' else "Closed/Not Faulted")
-                # Save zoneStatus
-                if zoneBit == '1':
-                    zoneStatus = "open"
-                else:
-                    zoneStatus = "closed"
+            if not zoneName:
+                # logging.debug("skipping update for zone %d", zoneNumber)
+                continue    # skip if not defined in config with name (i.e. we care about it?)
 
-                # Send to plugin
-                for plugin in self.plugins:
-                    plugin.zoneStatus(zoneNumber, zoneStatus)
+            # update status if changed
+            logmessage = ("%s (zone %i) is %s" % (zoneName, zoneNumber, zoneStatus))
+            logging.debug(logmessage)
+            if ALARMSTATE['zone'][zoneNumber]['status'] != zoneStatus:
+                logging.info("zone state change: " + logmessage)
+                ALARMSTATE['zone'][zoneNumber].update({
+                    'message': 'Recently ' + zoneStatus,
+                    'status': zoneStatus, 'closedSeconds': 0,
+                    'lastChanged': self.getTimeText()
+                })
+
+        # Send to plugin
+        for plugin in self.plugins:
+            plugin.zoneDump(ALARMSTATE['zone'])
 
     def handle_partition_state_change(self, data):
         self._has_partition_state_changed = True
         for currentIndex in range(0, 8):
-            partitionStateCode = data[currentIndex * 2:(currentIndex * 2) + 2]
-            partitionState = evl_Partition_Status_Codes[str(partitionStateCode)]
-            if partitionState['name'] != 'NOT_USED':
-                partitionNumber = currentIndex + 1
-                previouslyArmed = ALARMSTATE['partition'][partitionNumber]['status'].get('armed', False)
-                armed = partitionState['name'] in ('ARMED_STAY', 'ARMED_AWAY', 'ARMED_MAX')
-                ALARMSTATE.update({'arm': not armed, 'disarm': armed, 'cancel': bool(partitionState['name'] == 'EXIT_ENTRY_DELAY')})
-                ALARMSTATE['partition'][partitionNumber]['status'].update({'exit_delay': bool(partitionState['name'] == 'EXIT_ENTRY_DELAY' and not previouslyArmed),
-                                                                           'entry_delay': bool(partitionState['name'] == 'EXIT_ENTRY_DELAY' and previouslyArmed),
-                                                                           'armed': armed,
-                                                                           'ready': bool(partitionState['name'] == 'READY' or partitionState['name'] == 'READY_BYPASS')})
-                if partitionState['name'] == 'NOT_READY': ALARMSTATE['partition'][partitionNumber]['status'].update({'ready': False})
+            partitionNumber = currentIndex + 1
+            statusCode = data[currentIndex * 2:(currentIndex * 2) + 2]
+            statusText = evl_Partition_Status_Codes[str(statusCode)]['name']
 
-                logging.debug('Parition ' + str(partitionNumber) + ' is in state ' + partitionState['name'])
-                logging.debug(json.dumps(ALARMSTATE))
+            # skip partitions we don't care about
+            if statusText == 'NOT_USED' or not self._config.PARTITIONNAMES[partitionNumber]:
+                continue
 
-                # Send to plugin
-                for plugin in self.plugins:
-                    plugin.partitionStatus(partitionNumber, partitionState['name'])
+            newStatus = {
+                'alarm': statusText == 'IN_ALARM',
+                'alarm_in_memory': statusText == 'ALARM_IN_MEMORY',
+                'armed_away': statusText == 'ARMED_AWAY',
+                # 'ac_present'
+                'bypass': statusText == 'READY_BYPASS',
+                # 'chime': statusText == '',
+                'armed_max': statusText == 'ARMED_MAX',
+                'alarm_fire': statusText == 'ALARM_FIRE',
+                # 'system_trouble': statusText == '',
+                'ready': statusText == 'READY',  # in ('READY', 'READY_BYPASS'),
+                'fire': statusText == 'ALARM_FIRE',
+                # 'low_battery': statusText == '',
+                'armed_stay': statusText == 'ARMED_STAY',
+                'message': statusText
+            }
+            self.setPartitionStatus(partitionNumber, newStatus)
+
+    def setPartitionStatus(self, partitionNumber, newStatus):
+        statusMap = ALARMSTATE['partition'][partitionNumber]
+        # compute list of all keys that are different between old and new status.
+        # message change doesn't count as a state change.
+        keyDiff = [key for key in newStatus
+                   if key != 'message' and newStatus[key] != statusMap[key]]
+        if len(keyDiff) > 0:
+            logging.debug('Partition old status: ' + str(statusMap))
+            statusMap.update(newStatus)
+            statusMap['lastChanged'] = self.getTimeText()
+            logging.info('Partition state change: ' + str(statusMap))
+            logging.debug('Partition key diff: ' + str(keyDiff))
+        else:
+            logging.debug('Partition %d status: %s', partitionNumber, str(statusMap))
+
+        if statusMap['ready']:
+            self.closeAllZones()
+
+        # Send to plugin
+        for plugin in self.plugins:
+            plugin.partitionStatus(partitionNumber, statusMap)
 
     def handle_realtime_cid_event(self, data):
         eventTypeInt = int(data[0])
@@ -493,12 +521,14 @@ class EnvisalinkClient(LineOnlyReceiver):
         if cidEvent['type'] == 'user':
             currentUser = self._config.ALARMUSERNAMES[int(zoneOrUser)]
             if not currentUser: currentUser = 'Unknown!'
-            currentZone = 'N/A'
+            zone = -1
+            zoneName = 'N/A'
         if cidEvent['type'] == 'zone':
-            currentZone = self._config.ZONENAMES[int(zoneOrUser)]
-            if not currentZone: currentZone = 'Unknown!'
+            zone = int(zoneOrUser)
+            zoneName = self._config.ZONENAMES[zone]
+            if not zoneName: zoneName = 'Unknown!'
             currentUser = 'N/A'
-        logging.debug('Mapped User is ' + currentUser + '. Mapped Zone is ' + currentZone)
+        logging.debug('Mapped User is ' + currentUser + '. Mapped Zone is ' + zoneName)
         if cidEventInt == 401 and eventTypeInt == 3:  # armed away or instant/max
             for plugin in self.plugins:
                 plugin.armedAway(currentUser)
@@ -513,13 +543,19 @@ class EnvisalinkClient(LineOnlyReceiver):
                 plugin.disarmedHome(currentUser)
         if cidEventInt in range(100, 164) and eventTypeInt == 1:   # alarm triggered
             for plugin in self.plugins:
-                plugin.alarmTriggered(cidEvent['label'], currentZone)
+                plugin.alarmTriggered(cidEvent['label'], zone, zoneName)
         if cidEventInt in range(100, 164) and eventTypeInt == 3:   # alarm in memory cleared
             for plugin in self.plugins:
-                plugin.alarmCleared(cidEvent['label'], currentZone)
+                plugin.alarmCleared(cidEvent['label'], zone, zoneName)
         if cidEventInt is 406 and eventTypeInt == 1:              # alarm cancelled by user
             for plugin in self.plugins:
-                plugin.alarmCleared(cidEvent['label'], currentZone)
+                plugin.alarmCleared(cidEvent['label'], zone, zoneName)
+
+    # returns the current time in a human-readable format, optionally
+    # offset by a number of seconds.
+    def getTimeText(self, secondsAgo=0):
+        t = datetime.now() - timedelta(seconds=secondsAgo)
+        return t.strftime("%Y-%m-%d %H:%M:%S")
 
     # note that a request to dump zone timers generates both a standard command
     # response (handled elsewhere) as well as this event
@@ -527,16 +563,48 @@ class EnvisalinkClient(LineOnlyReceiver):
         zoneInfoArray = self.convertZoneDump(zoneDump)
         for zoneNumber, zoneInfo in enumerate(zoneInfoArray, start=1):
             zoneName = self._config.ZONENAMES[zoneNumber]
-            if zoneName:
-                ALARMSTATE['zone'][zoneNumber]['lastfault'] = zoneInfo['message']
-                logging.debug("%s (zone %i) %s", zoneName, zoneNumber, zoneInfo['message'])
-                for plugin in self.plugins:
-                    plugin.zoneStatus(zoneNumber, zoneInfo['status'])
 
+            # skip zones we don't care about
+            if not zoneName:
+                continue
+
+            logMessage = ("%s (zone %i) %s" % (zoneName, zoneNumber, zoneInfo))
+            logging.debug(logMessage)
+            if ALARMSTATE['zone'][zoneNumber]['status'] != zoneInfo['status']:
+                logging.info("Zone state change: " + logMessage)
+
+                # Correct lastChanged time by closedSeconds, which is 0 if open.
+                zoneInfo['lastChanged'] = self.getTimeText(
+                    secondsAgo=zoneInfo['closedSeconds'])
+
+            # update zone state
+            ALARMSTATE['zone'][zoneNumber].update(zoneInfo)
+
+        for plugin in self.plugins:
+            plugin.zoneDump(ALARMSTATE['zone'])
+
+    # close all zones and send a zone status update if necessary
+    def closeAllZones(self):
+        numChanged = 0
+        for zoneNumber, zoneInfo in ALARMSTATE['zone'].items():
+            if zoneInfo['status'] != 'closed':
+                ++numChanged
+                zoneName = zoneInfo['name']
+                logging.info("zone state change: %s (zone %i) %s",
+                             zoneName, zoneNumber, zoneInfo)
+                ALARMSTATE['zone'][zoneNumber].update({
+                    'message': 'Recently closed',
+                    'status': 'closed',
+                    'closedSeconds': 0,
+                    'lastChanged': self.getTimeText()
+                })
+
+        if numChanged > 0:
+            logging.debug("Closed %d zones", numChanged)
+            plugin.zoneDump(ALARMSTATE['zone'])
 
     # convert a zone dump into something humans can make sense of
     def convertZoneDump(self, theString):
-
         returnItems = []
 
         # every four characters
@@ -561,15 +629,18 @@ class EnvisalinkClient(LineOnlyReceiver):
 
             if itemHexString == "FFFF":
                 itemLastClosed = "Currently Open"
+                itemSeconds = 0
                 status = 'open'
             if itemHexString == "0000":
                 itemLastClosed = "Last Closed longer ago than I can remember"
+                itemSeconds = -1
                 status = 'closed'
             else:
                 itemLastClosed = "Last Closed " + itemLastClosed
                 status = 'closed'
 
-            returnItems.append({'message': str(itemLastClosed), 'status': status})
+            returnItems.append({'message': itemLastClosed, 'status': status,
+                                'closedSeconds': itemSeconds})
         return returnItems
 
     # public domain from https://pypi.python.org/pypi/ago/0.0.6
@@ -723,7 +794,7 @@ if __name__ == "__main__":
     config = AlarmServerConfig(conffile)
     loggingconfig = {'level': config.LOGLEVEL,
                      'format': '%(asctime)s %(levelname)s <%(name)s %(module)s %(funcName)s> %(message)s',
-                     'datefmt': '%a, %d %b %Y %H:%M:%S'}
+                     'datefmt': '%Y-%m-%d %H:%M:%S'}
     if config.LOGFILE != '':
         loggingconfig['filename'] = config.LOGFILE
     logging.basicConfig(**loggingconfig)
