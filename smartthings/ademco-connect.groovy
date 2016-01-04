@@ -1,18 +1,15 @@
 /*
  *  Ademco Alarm Panel integration via REST API callbacks
  *
- *  Author: Kent Holloway <drizit@gmail.com>
- *  Modified by: Mike Jahr <michaelj@gmail.com>
+ *  Author: Mike Jahr <michaelj@gmail.com>
  */
 
 definition(
-    name: "AlarmServer Integration",
+    name: "Ademco Integration",
     namespace: "mjahr",
     author: "Mike Jahr <michaelj@gmail.com>",
-    description: "Alarmserver Integration App",
+    description: "Ademco Integration App",
     category: "My Apps",
-    iconUrl: "https://dl.dropboxusercontent.com/u/2760581/dscpanel_small.png",
-    iconX2Url: "https://dl.dropboxusercontent.com/u/2760581/dscpanel_large.png",
     oauth: true
 )
 
@@ -98,10 +95,20 @@ private def getKeypadDevice() {
   return d
 }
 
-// Identifier used for the keypad device.
-private def keypadDni() {
-  return "ademcoKeypad"
+private def getPanelDevice() {
+  def d = getChildDevice(panelDni())
+  if (d == null) {
+    log.info("Creating panel device")
+    def initialState = ["status": "Uninitialized"]
+    d = addChildDevice(app.namespace, "Ademco Panel", panelDni(), null, initialState)
+  }
+  return d
 }
+
+
+// Identifiers used for the keypad and panel devices.
+private def keypadDni() { return "ademcoKeypad" }
+private def panelDni()  { return "ademcoPanel"  }
 
 private def getZoneDevice(zoneNumber) {
 
@@ -110,13 +117,14 @@ private def getZoneDevice(zoneNumber) {
 def initialize() {
   log.info("Initializing Ademco integration")
   getKeypadDevice()
+  getPanelDevice()
 }
 
 private updateZones() {
   log.debug "request.JSON: " + request.JSON
   state.zones = request.JSON
-  def keypadDevice = getKeypadDevice()
-  log.debug "sending zone update to ${keypadDevice.name}"
+  def panelDevice = getPanelDevice()
+  log.debug "sending zone update to ${panelDevice.name}"
   for (e in request.JSON) {
     def zoneNumber = e.key
     def zoneStateMap = e.value
@@ -124,7 +132,7 @@ private updateZones() {
     def status = zoneStateMap?.status
     def message = zoneStateMap?.message
     log.info "updateZones: $zoneNumber '$name' is $status: $message"
-    keypadDevice.sendEvent([name: "${name}", value: "${status}",
+    panelDevice.sendEvent([name: "${name}", value: "${status}",
 			    descriptionText: "${name}: ${message}"])
   }
 }
@@ -137,16 +145,15 @@ private updatePartition() {
 
   // Add every field from the json payload as an event.  SmartThings
   // will dedup events where necessary.
-  def keypadDevice = getKeypadDevice()
-  log.debug "sending partition update to ${keypadDevice.name}"
+  def panelDevice = getPanelDevice()
+  log.debug "sending partition update to ${panelDevice.name}"
   for (e in request.JSON) {
+    panelDevice.sendEvent([name: e.key, value: e.value, display: false,
+			   descriptionText: "${e.key} is ${e.value}"])
     if (e.key == "message") {
+      def keypadDevice = getKeypadDevice()
       keypadDevice.sendEvent([name: e.key, value: e.value,
-			      descriptionText: "${e.value}"])
-    } else {
-      // Set display=false to avoid cluttering logs with non-message updates
-      keypadDevice.sendEvent([name: e.key, value: e.value, display: false,
-			      descriptionText: "${e.key} is ${e.value}"])
+			      descriptionText: e.value])
     }
   }
 }
@@ -167,14 +174,4 @@ private updateAlarm() {
 private updatePanel() {
   def message = request.JSON?.message
   log.info "updatePanel: $message"
-}
-
-private sendMessage(msg) {
-    def newMsg = "Alarm Notification: $msg"
-    if (phone1) {
-        sendSms(phone1, newMsg)
-    }
-    if (sendPush == "Yes") {
-        sendPush(newMsg)
-    }
 }
