@@ -87,15 +87,24 @@ def updated() {
   initialize()
 }
 
-private def keypadDni()       { return "ademcoKeypad" }
+// Keypad device is a child device which displays the alarm system status.
 private def getKeypadDevice() {
   def d = getChildDevice(keypadDni())
   if (d == null) {
     log.info("Creating keypad device")
-    def initialState = ["message":"Uninitialized"]
+    def initialState = ["message": "Uninitialized"]
     d = addChildDevice(app.namespace, "Ademco Keypad", keypadDni(), null, initialState)
   }
   return d
+}
+
+// Identifier used for the keypad device.
+private def keypadDni() {
+  return "ademcoKeypad"
+}
+
+private def getZoneDevice(zoneNumber) {
+
 }
 
 def initialize() {
@@ -116,7 +125,7 @@ private updateZones() {
     def message = zoneStateMap?.message
     log.info "updateZones: $zoneNumber '$name' is $status: $message"
     keypadDevice.sendEvent([name: "${name}", value: "${status}",
-			    descriptionText: "${message}"])
+			    descriptionText: "${name}: ${message}"])
   }
 }
 
@@ -126,12 +135,20 @@ private updatePartition() {
   log.info "updatePartition: '$message'"
   log.debug "request.JSON: " + request.JSON
 
+  // Add every field from the json payload as an event.  SmartThings
+  // will dedup events where necessary.
   def keypadDevice = getKeypadDevice()
   log.debug "sending partition update to ${keypadDevice.name}"
   for (e in request.JSON) {
-    keypadDevice.sendEvent([name: e.key, value: e.value])
+    if (e.key == "message") {
+      keypadDevice.sendEvent([name: e.key, value: e.value,
+			      descriptionText: "${e.value}"])
+    } else {
+      // Set display=false to avoid cluttering logs with non-message updates
+      keypadDevice.sendEvent([name: e.key, value: e.value, display: false,
+			      descriptionText: "${e.key} is ${e.value}"])
+    }
   }
-  //keypadDevice.sendEvent([name: "message", value: "${message}"])
 }
 
 private updateAlarm() {
