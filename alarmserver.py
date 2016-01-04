@@ -135,6 +135,7 @@ class AlarmServerConfig(BaseConfig):
             ALARMSTATE['partition'][pNumber] = {
                 'name': pName,
                 'message': 'uninitialized',
+                'status': 'uninitialized',
                 'beep': 'uninitialized',
                 'alarm': False,
                 'alarm_in_memory': False,
@@ -234,7 +235,8 @@ class EnvisalinkClient(LineOnlyReceiver):
             # if too much time has passed since command was sent without a
             # response, something is wrong
             delta = now - self._lastcommand
-            if self._lastcommandresponse < self._lastcommand and delta > timedelta(seconds=self._config.ENVISACOMMANDTIMEOUT):
+            if (self._lastcommandresponse < self._lastcommand and
+                delta > timedelta(seconds=self._config.ENVISACOMMANDTIMEOUT)):
                 message = "Timed out waiting for command response, resetting connection..."
                 logging.error(message)
                 for plugin in self.plugins:
@@ -245,13 +247,15 @@ class EnvisalinkClient(LineOnlyReceiver):
             # is it time to poll again?
             if self._config.ENVISAPOLLINTERVAL != 0:
                 delta = now - self._lastpoll
-                if delta > timedelta(seconds=self._config.ENVISAPOLLINTERVAL) and not self._commandinprogress:
+                if (delta > timedelta(seconds=self._config.ENVISAPOLLINTERVAL) and
+                    not self._commandinprogress):
                     self._lastpoll = now
                     self.send_command('00', '')
 
             # is it time to dump zone states again?
             delta = now - self._lastzonedump
-            if delta > timedelta(seconds=self._config.ENVISAZONEDUMPINTERVAL) and not self._commandinprogress:
+            if (delta > timedelta(seconds=self._config.ENVISAZONEDUMPINTERVAL) and
+                not self._commandinprogress):
                 self._lastzonedump = now
                 self.dump_zone_timers()
 
@@ -272,10 +276,12 @@ class EnvisalinkClient(LineOnlyReceiver):
 
     def send_command(self, code, data):
         if not self._loggedin:
-            logging.error("Not connected to Envisalink - ignoring last command")
+            logging.error("Not connected to Envisalink - ignoring command %s",
+                          code)
             return
         if self._commandinprogress:
-            logging.error("Command already in progress - ignoring last command")
+            logging.error("Command already in progress - ignoring command %s",
+                          code)
             return
         self._commandinprogress = True
         self._lastcommand = datetime.now()
@@ -284,7 +290,8 @@ class EnvisalinkClient(LineOnlyReceiver):
 
     def change_partition(self, partitionNumber):
         if partitionNumber < 1 or partitionNumber > 8:
-            logging.error("Invalid Partition Number %i specified when trying to change partition, ignoring.", partitionNumber)
+            logging.error("Invalid Partition Number %d specified when trying "
+                          "to change partition, ignoring.", partitionNumber)
             return
         self.send_command('01', str(partitionNumber))
 
@@ -303,17 +310,21 @@ class EnvisalinkClient(LineOnlyReceiver):
     # network communication callbacks
 
     def connectionMade(self):
-        logging.info("Connected to %s:%i" % (self._config.ENVISALINKHOST, self._config.ENVISALINKPORT))
+        logging.info("Connected to %s:%d" %
+                     (self._config.ENVISALINKHOST,
+                      self._config.ENVISALINKPORT))
 
     def connectionLost(self, reason):
         if not shuttingdown:
-            logging.info("Disconnected from %s:%i, reason was %s" % (self._config.ENVISALINKHOST, self._config.ENVISALINKPORT, reason.getErrorMessage()))
+            logging.info("Disconnected from %s:%d, reason was %s" %
+                         (self._config.ENVISALINKHOST,
+                          self._config.ENVISALINKPORT,
+                          reason.getErrorMessage()))
             if self._loggedin:
                 self.logout()
 
     def lineReceived(self, input):
         if input != '':
-
             logging.debug('----------------------------------------')
             logging.debug('RX < ' + input)
             if input[0] in ("%", "^"):
@@ -413,7 +424,7 @@ class EnvisalinkClient(LineOnlyReceiver):
             logging.error('Skipping keypad update because of command in progress')
         else:
             self._lastpartitionupdate = now
-            logging.debug("keypad_update: zone " + userOrZone);
+            logging.debug("keypad_update: zone %s status %s", userOrZone, newStatus);
             self.setPartitionStatus(partitionNumber, newStatus)
 
         # TODO: update zone state based on userOrZone
@@ -445,7 +456,7 @@ class EnvisalinkClient(LineOnlyReceiver):
                 logging.info("zone state change: " + logmessage)
 
                 ALARMSTATE['zone'][zoneNumber].update({
-                    'message': ("%s at %s" % zoneStatus, timeStr),
+                    'message': ("%s at %s" % (zoneStatus, timeStr)),
                     'status': zoneStatus, 'closedSeconds': 0,
                     'lastChanged': timeStr
                 })
@@ -479,8 +490,10 @@ class EnvisalinkClient(LineOnlyReceiver):
                 'fire': statusText == 'ALARM_FIRE',
                 # 'low_battery': statusText == '',
                 'armed_stay': statusText == 'ARMED_STAY',
-                'message': statusText
+                'status': statusText
             }
+            logging.debug('partition %d status update: %s',
+                          partitionNumber, newStatus)
             self.setPartitionStatus(partitionNumber, newStatus)
 
     def setPartitionStatus(self, partitionNumber, newStatus):
@@ -488,16 +501,16 @@ class EnvisalinkClient(LineOnlyReceiver):
         # compute list of all keys that are different between old and new status.
         # message change doesn't count as a state change.
         keyDiff = [key for key in newStatus
-                   if key != 'message' and newStatus[key] != statusMap[key]]
+                   if (newStatus[key] != statusMap[key] and
+                       key not in ('message', 'status'))]
         if len(keyDiff) > 0:
             logging.debug('Partition old status: ' + str(statusMap))
-            statusMap.update(newStatus)
             statusMap['lastChanged'] = self.getTimeText()
             logging.info('Partition state change: ' + str(statusMap))
             logging.debug('Partition key diff: ' + str(keyDiff))
-        else:
-            logging.debug('Partition %d status: %s', partitionNumber, str(statusMap))
 
+        statusMap.update(newStatus)
+        logging.debug('Partition %d status: %s', partitionNumber, str(newStatus))
         if statusMap['ready']:
             self.closeAllZones()
 
@@ -795,9 +808,10 @@ if __name__ == "__main__":
 
     print('Using configuration file %s' % conffile)
     config = AlarmServerConfig(conffile)
-    loggingconfig = {'level': config.LOGLEVEL,
-                     'format': '%(asctime)s %(levelname)s <%(name)s %(module)s %(funcName)s> %(message)s',
-                     'datefmt': '%Y-%m-%d %H:%M:%S'}
+    loggingconfig = {
+        'level': config.LOGLEVEL,
+        'format': '%(asctime)s %(levelname)s <%(name)s %(module)s %(funcName)s> %(message)s',
+        'datefmt': '%Y-%m-%d %H:%M:%S'}
     if config.LOGFILE != '':
         loggingconfig['filename'] = config.LOGFILE
     logging.basicConfig(**loggingconfig)
