@@ -19,7 +19,7 @@ metadata {
 
   tiles {
     standardTile("zone", "device.motion", width: 2, height: 2,
-		 canChangeBackground: true, canChangeIcon: true) {
+                 canChangeBackground: true, canChangeIcon: true) {
       state("active",   label:'motion',    icon:"st.motion.motion.active",   backgroundColor:"#53a7c0")
       state("inactive", label:'no motion', icon:"st.motion.motion.inactive", backgroundColor:"#ffffff")
     }
@@ -34,10 +34,16 @@ metadata {
 
 def setState(String state) {
   // map open/closed to motion/no motion
+  def description
   if (state == "open") {
-    state = "motion"
+    state = "active"
+    description = "Motion detected."
   } else if (state == "closed") {
-    state = "no motion"
+    state = "inactive"
+    description = "No motion detected."
+  } else {
+    description = "Unexpected state for motion sensor: $state"
+    log.error(description)
   }
-  sendEvent("motion", state)
+  sendEvent([name: "motion", value: state, descriptionText: description])
 }

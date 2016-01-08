@@ -29,11 +29,13 @@ metadata {
 
     main "contact"
 
-    // These tiles will be displayed when clicked on the device, in the order listed here.
+    // These tiles will be displayed when clicked on the device, in
+    // the order listed here.
     details(["contact"])
   }
 }
 
 def setState(String state) {
-  sendEvent("contact", state)
+  sendEvent([name: "contact", value: state,
+             descriptionText: "Door is ${state}."])
 }
