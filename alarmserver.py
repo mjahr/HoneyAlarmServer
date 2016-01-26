@@ -398,6 +398,24 @@ class EnvisalinkClient(LineOnlyReceiver):
             logging.debug("Skipping partition %d", partitionNumber)
             return
 
+                # TODO: update status text based on bitfield
+        # if (newStatus['alarm']):
+        #     statusText == 'IN_ALARM'
+        # elif (newStatus[
+        #         'alarm_in_memory': statusText == 'ALARM_IN_MEMORY',
+        #         'armed_away': statusText == 'ARMED_AWAY',
+        #         # 'ac_present'
+        #         'bypass': statusText == 'READY_BYPASS',
+        #         # 'chime': statusText == '',
+        #         'armed_max': statusText == 'ARMED_MAX',
+        #         'alarm_fire': statusText == 'ALARM_FIRE',
+        #         # 'system_trouble': statusText == '',
+        #         'ready': statusText == 'READY',  # in ('READY', 'READY_BYPASS'),
+        #         'fire': statusText == 'ALARM_FIRE',
+        #         # 'low_battery': statusText == '',
+        #         'armed_stay': statusText == 'ARMED_STAY',
+        #         'status': statusText
+
         newStatus = {
             'alarm': bool(flags.alarm),
             'alarm_in_memory': bool(flags.alarm_in_memory),
@@ -416,18 +434,48 @@ class EnvisalinkClient(LineOnlyReceiver):
             'message': alpha
          }
 
+        # TODO: respect min update interval only if the keypad is
+        # repeating the same message or cycling between a set of
+        # messages
+
         now = datetime.now()
         delta = now - self._lastpartitionupdate
         if delta < timedelta(seconds=self._config.ENVISAKEYPADUPDATEINTERVAL):
             logging.debug('Skipping keypad update within update interval')
-        elif self._commandinprogress:
-            logging.error('Skipping keypad update because of command in progress')
         else:
+            # We shouldn't have to skip keypad update during command in
+            # progress because we don't initiate another command.
+            if self._commandinprogress:
+                logging.warning('Proceeding with keypad update despite command in progress')
             self._lastpartitionupdate = now
             logging.debug("keypad_update: zone %s status %s", userOrZone, newStatus);
+            # Update zone status if the keypad is reporting a fault.
+            if alpha.startswith("FAULT") and not flags.ready:
+                zoneNumber = int(userOrZone)
+                if self.updateZoneStatus(zoneNumber, "open"):
+                    # Send to plugin if zone status has changed.
+                    for plugin in self.plugins:
+                        plugin.zoneDump(ALARMSTATE['zone'])
             self.setPartitionStatus(partitionNumber, newStatus)
 
-        # TODO: update zone state based on userOrZone
+    def updateZoneStatus(self, zoneNumber, zoneStatus):
+        zoneName = self._config.ZONENAMES[zoneNumber]
+        # only bother to update if zone name is defined in config
+        if not zoneName:
+            return False
+
+        logmessage = ("%s (zone %i) is %s" % (zoneName, zoneNumber, zoneStatus))
+        logging.debug(logmessage)
+        statusChanged = (ALARMSTATE['zone'][zoneNumber]['status'] != zoneStatus)
+        if statusChanged:
+            logging.info("zone state change: " + logmessage)
+            timeStr = self.getTimeText()
+            ALARMSTATE['zone'][zoneNumber].update({
+                'message': ("%s at %s" % (zoneStatus, timeStr)),
+                'status': zoneStatus, 'closedSeconds': 0,
+                'lastChanged': timeStr
+            })
+        return statusChanged
 
     def handle_zone_state_change(self, data):
         # Envisalink TPI is inconsistent at generating these
@@ -439,27 +487,11 @@ class EnvisalinkClient(LineOnlyReceiver):
         # Convert from hex to binary
         beBin = bin(int(beHex, 16))[2:].zfill(64)
 
-        timeStr = self.getTimeText()
         for zoneNumber in range(1,65):
             # zone numbers are 1-indexed.  big-endian means zone 1 is the last bit
             zoneBit = beBin[64 - zoneNumber]
             zoneStatus = 'open' if zoneBit == '1' else 'closed'
-            zoneName = self._config.ZONENAMES[zoneNumber]
-            if not zoneName:
-                # logging.debug("skipping update for zone %d", zoneNumber)
-                continue    # skip if not defined in config with name (i.e. we care about it?)
-
-            # update status if changed
-            logmessage = ("%s (zone %i) is %s" % (zoneName, zoneNumber, zoneStatus))
-            logging.debug(logmessage)
-            if ALARMSTATE['zone'][zoneNumber]['status'] != zoneStatus:
-                logging.info("zone state change: " + logmessage)
-
-                ALARMSTATE['zone'][zoneNumber].update({
-                    'message': ("%s at %s" % (zoneStatus, timeStr)),
-                    'status': zoneStatus, 'closedSeconds': 0,
-                    'lastChanged': timeStr
-                })
+            self.updateZoneStatus(zoneNumber, zoneStatus)
 
         # Send to plugin
         for plugin in self.plugins:
