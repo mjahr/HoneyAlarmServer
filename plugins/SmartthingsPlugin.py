@@ -94,11 +94,27 @@ class SmartthingsPlugin(BasePlugin):
     # path: relative to self._urlbase
     # payload: dict used as body of the post, json-encoded.
     def sendApiRequest(self, path, payload):
+        # because we're sending this asynchronously, dump the
+        # payload to a string to ignore future updates to the dict
+        data = json.dumps(payload)
+
+        # if the queue is full, pull off the oldest item to make
+        # space for the newer item.
+        if self._queue.full():
+            logging.warning("Queue is full, dropping one item, size=%d",
+                            self._queue.qsize())
+            try:
+                self._queue.get(block=False)
+            except Queue.Empty as e:
+                pass
+
         try:
-            self._queue.put([path, payload], block=False)
-        except e:
-            logging.error("SmartThings api request failed; queue is full; "
-                          "path=%s payload=%s", path, payload)
+            self._queue.put([path, data], block=False)
+            logging.debug("Enqueued smartthings api request to /%s", path)
+        except Queue.Full as e:
+            logging.error("SmartThings api request failed: queue is full; "
+                          "qsize=%d path=%s payload=%s",
+                          self._queue.qsize(), path, payload)
     ####
     # Methods related to the api thread
 
@@ -115,25 +131,31 @@ class SmartthingsPlugin(BasePlugin):
         logging.info("SmartThings api thread starting")
         while not self._is_exiting.is_set():
             try:
+                # wake up once per second
                 [path, payload] = self._queue.get(block=True, timeout=1)
                 # only post if not empty
                 if path:
                     self._postApiSynchronous(path, payload)
-            except Exception as e:
+                self._queue.task_done()
+            except Queue.Empty as e:
                 pass
         logging.info("SmartThings api thread exiting")
 
     # Sends an api request synchronously, should only run in worker thread.
     def _postApiSynchronous(self, path, payload):
         try:
+            logging.debug("Posting smartthings api to /%s", path)
             url = (self._urlbase + "/" + path +
                    "?access_token=" + self._CALLBACKURL_ACCESS_TOKEN)
-            response = requests.post(url, json=payload, timeout=self._API_TIMEOUT)
+            response = requests.post(url, data=payload, timeout=self._API_TIMEOUT)
             if response.status_code not in [requests.codes.ok,
                                             requests.codes.created,
                                             requests.codes.accepted]:
-                logging.error("Problem sending a smartthings notification, url: "
-                              "%s payload: %s status: %d response: %s" %
-                              (url, payload, response.status_code, response.text))
+                logging.error("Problem posting a smartthings notification; "
+                              "url: %s payload: %s status: %d response: %s",
+                              url, payload, response.status_code, response.text)
+            else:
+                logging.debug("Successfully posted smartthings api; "
+                              "path=%s payload=%s", path, payload)
         except requests.exceptions.RequestException as e:
             logging.error("Error communicating with smartthings server: " + str(e))
