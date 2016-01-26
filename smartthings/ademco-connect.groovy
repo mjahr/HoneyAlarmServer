@@ -152,6 +152,7 @@ private updateZones() {
 
     def zoneDevice = getZoneDevice(zoneNumber)
     if (zoneDevice) {
+      log.info "updateZone: setting ${zoneDevice} state to ${status}"
       zoneDevice.setState(status)
     }
   }
@@ -168,7 +169,7 @@ private updatePartition() {
   def panelDevice = getPanelDevice()
   log.debug "sending partition update to ${panelDevice.name}"
   for (e in request.JSON) {
-    panelDevice.sendEvent([name: e.key, value: e.value, display: false,
+    panelDevice.sendEvent([name: e.key, value: e.value, displayed: false,
                            descriptionText: "${e.key} is ${e.value}"])
     if (e.key == "message") {
       def keypadDevice = getKeypadDevice()
