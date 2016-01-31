@@ -20,8 +20,8 @@ metadata {
   tiles {
     standardTile("zone", "device.motion", width: 2, height: 2,
                  canChangeBackground: true, canChangeIcon: true) {
-      state("active",   label:'motion',    icon:"st.motion.motion.active",   backgroundColor:"#53a7c0")
-      state("inactive", label:'no motion', icon:"st.motion.motion.inactive", backgroundColor:"#ffffff")
+      state("active",   label:"motion",    icon:"st.motion.motion.active",   backgroundColor:"#53a7c0")
+      state("inactive", label:"no motion", icon:"st.motion.motion.inactive", backgroundColor:"#ffffff")
     }
 
     // This tile will be the tile that is displayed on the Hub page.
@@ -35,15 +35,21 @@ metadata {
 def setState(String state) {
   // map open/closed to motion/no motion
   def description
+  def display = true
   if (state == "open") {
     state = "active"
     description = "Motion detected."
   } else if (state == "closed") {
     state = "inactive"
+    // Do not display inactive transitions in the activity feed
+    // because they always immediately follow active transitions and
+    // just add clutter.
+    display = false
     description = "No motion detected."
   } else {
     description = "Unexpected state for motion sensor: $state"
     log.error(description)
   }
-  sendEvent([name: "motion", value: state, descriptionText: description])
+  sendEvent([name: "motion", value: state, displayed: display,
+	     descriptionText: description])
 }
