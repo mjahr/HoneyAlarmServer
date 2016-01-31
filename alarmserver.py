@@ -42,27 +42,6 @@ class AlarmServerConfig(BaseConfig):
         # call ancestor for common setup
         super(self.__class__, self).__init__(configfile)
 
-        self.LOGURLREQUESTS = self.read_config_var('alarmserver',
-                                                   'logurlrequests',
-                                                   True, 'bool')
-        self.LISTENTYPE = self.read_config_var('alarmserver',
-                                               'listentype',
-                                               'tcp', 'str')
-        self.LISTENPORT = self.read_config_var('alarmserver',
-                                               'listenport',
-                                               8111, 'int')
-        self.CERTFILE = self.read_config_var('alarmserver',
-                                             'certfile',
-                                             'server.crt', 'str')
-        self.KEYFILE = self.read_config_var('alarmserver',
-                                            'keyfile',
-                                            'server.key', 'str')
-        self.MAXEVENTS = self.read_config_var('alarmserver',
-                                              'maxevents',
-                                              10, 'int')
-        self.MAXALLEVENTS = self.read_config_var('alarmserver',
-                                                 'maxallevents',
-                                                 100, 'int')
         self.ENVISALINKHOST = self.read_config_var('envisalink',
                                                    'host',
                                                    'envisalink', 'str')
@@ -365,7 +344,8 @@ class EnvisalinkClient(LineOnlyReceiver):
         logging.error('Password is incorrect. Server is closing socket connection.')
 
     def handle_login_timeout(self, data):
-        logging.error('Envisalink timed out waiting for password, whoops that should never happen. Server is closing socket connection')
+        logging.error('Envisalink timed out waiting for password, whoops that '
+                      'should never happen.  Server is closing socket connection')
 
     def handle_poll_response(self, code):
         self._lastpollresponse = datetime.now()
@@ -377,12 +357,14 @@ class EnvisalinkClient(LineOnlyReceiver):
         responseString = evl_TPI_Response_Codes[code]
         logging.debug("Envisalink response: " + responseString)
         if code != '00':
-            logging.error("error sending command to envisalink.  Response was: " + responseString)
+            logging.error("error sending command to envisalink.  Response was: "
+                          + responseString)
 
     def handle_keypad_update(self, data):
         self._lastkeypadupdate = datetime.now()
         dataList = data.split(',')
-        # make sure data is in format we expect, current TPI seems to send bad data every so ofen
+        # make sure data is in format we expect, current TPI seems to
+        # send bad data every so ofen
         if len(dataList) != 5 or "%" in data:
             logging.error("Data format invalid from Envisalink, ignoring...")
             return
@@ -442,7 +424,7 @@ class EnvisalinkClient(LineOnlyReceiver):
             # We shouldn't have to skip keypad update during command in
             # progress because we don't initiate another command.
             if self._commandinprogress:
-                logging.warning('Proceeding with keypad update despite command in progress')
+                logging.warning('Keypad update while command in progress')
             self._lastpartitionupdate = now
             logging.debug("keypad_update: zone %s status %s", userOrZone, newStatus);
             # Update zone status if the keypad is reporting a fault.
@@ -504,7 +486,8 @@ class EnvisalinkClient(LineOnlyReceiver):
             statusText = evl_Partition_Status_Codes[str(statusCode)]['name']
 
             # skip partitions we don't care about
-            if statusText == 'NOT_USED' or not self._config.PARTITIONNAMES[partitionNumber]:
+            if (statusText == 'NOT_USED' or
+                not self._config.PARTITIONNAMES[partitionNumber]):
                 continue
 
             newStatus = {
@@ -597,16 +580,19 @@ class EnvisalinkClient(LineOnlyReceiver):
         # every four characters
         inputItems = re.findall('....', theString)
         for inputItem in inputItems:
-            # Swap the couples of every four bytes (little endian to big endian)
+            # Swap the couples of every four bytes
+            # (little endian to big endian)
             swapedBytes = []
             swapedBytes.insert(0, inputItem[0:2])
             swapedBytes.insert(0, inputItem[2:4])
 
-            # add swapped set of four bytes to our return items, converting from hex to int
+            # add swapped set of four bytes to our return items,
+            # converting from hex to int
             itemHexString = ''.join(swapedBytes)
             itemInt = int(itemHexString, 16)
 
-            # each value is a timer for a zone that ticks down every five seconds from maxint
+            # each value is a timer for a zone that ticks down every
+            # five seconds from maxint
             MAXINT = 65536
             itemTicks = MAXINT - itemInt
             itemSeconds = itemTicks * 5
@@ -682,83 +668,14 @@ class AlarmServer(Resource):
         # Store config
         self._config = config
 
-        # disable the web server
-        # root = Resource()
-        # rootFilePath = sys.path[0] + os.sep + 'ext'
-        # root.putChild('app', File(rootFilePath))
-        # root.putChild('img', File(rootFilePath))
-        # root.putChild('api', self)
-        # factory = Site(root)
-        # # conditionally import twisted ssl to help avoid unwanted
-        # # depdencies and import issues on some systems
-        # if config.LISTENTYPE.lower() == "tcp":
-        #     self._port = reactor.listenTCP(config.LISTENPORT, factory)
-        # elif config.LISTENTYPE.lower() == "ssl":
-        #     from twisted.internet import ssl
-        #     self._port = reactor.listenSSL(
-        #         config.LISTENPORT, factory,
-        #         ssl.DefaultOpenSSLContextFactory(config.KEYFILE, config.CERTFILE))
-        # else:
-        #     logging.warning("AlarmServer listen type %s unknown, server not started.",
-        #                     config.LISTENTYPE)
-
     def shutdownEvent(self):
         global shuttingdown
         shuttingdown = True
-        #logging.debug("Shutting down AlarmServer...")
-        #self._port.stopListening()
         logging.debug("Disconnecting from Envisalink...")
         self._envisaconnect.disconnect()
 
     def getChild(self, name, request):
         return self
-
-    def render_GET(self, request):
-        e = self._envisalinkClientFactory.envisalinkClient
-        logging.debug(request.uri)
-        query = urlparse.urlparse(request.uri)
-        logging.debug(query)
-        query_array = urlparse.parse_qs(query.query, True)
-        if 'alarmcode' in query_array:
-            alarmcode = str(query_array['alarmcode'][0])
-        else:
-            alarmcode = str(self._config.ALARMCODE)
-
-        request.setHeader('content-type', 'application/json')
-        myPath = query.path
-        if myPath[-1] == "/":
-            myPath = myPath[:-1]
-        if myPath == '/api':
-            return json.dumps(ALARMSTATE)
-        elif myPath == '/api/alarm/arm':
-            e.send_data(alarmcode + '2')
-            #e.keypresses_to_partition(1, alarmcode + '2')
-            return json.dumps({'response': 'Arm command sent to Envisalink.'})
-        elif myPath == '/api/alarm/stayarm':
-            e.send_data(alarmcode + '3')
-            return json.dumps({'response': 'Arm Home command sent to Envisalink.'})
-        elif myPath == '/api/alarm/disarm':
-            e.send_data(alarmcode + '1')
-            #e.keypresses_to_partition(1, alarmcode + '1')
-            return json.dumps({'response': 'Disarm command sent to Envisalink.'})
-        elif myPath == '/api/partition':
-            changeTo = query_array['changeto'][0]
-            if not changeTo.isdigit():
-                return json.dumps({'response': 'changeTo parameter was missing or not a number, ignored.'})
-            else:
-                e.change_partition(int(changeTo))
-                return json.dumps({'response': 'Request to change current partition to %s was received.' % changeTo})
-        elif myPath == '/api/testalarm':
-            e.handle_realtime_cid_event('1132010050')
-            return 'OK, boss'
-        elif myPath == '/api/testdump':
-            e.dump_zone_timers()
-            return 'OK, boss'
-        elif myPath == '/api/testreconnect':
-            e.logout()
-            return 'OK, boss'
-        else:
-            return NoResource().render(request)
 
 
 def usage():
