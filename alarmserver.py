@@ -240,7 +240,7 @@ class EnvisalinkClient(LineOnlyReceiver):
                 message = "Timed out waiting for command response, resetting connection..."
                 logging.error(message)
                 for plugin in self.plugins:
-                    plugin.envisalinkUnresponsive(message)
+                    plugin.sendError(message)
                 self.logout()
                 return
 
@@ -267,7 +267,7 @@ class EnvisalinkClient(LineOnlyReceiver):
                 message = "No recent keypad updates from envisalink, resetting connection..."
                 logging.error(message)
                 for plugin in self.plugins:
-                    plugin.envisalinkUnresponsive(message)
+                    plugin.sendError(message)
                 self.logout()
                 return
 
@@ -434,10 +434,6 @@ class EnvisalinkClient(LineOnlyReceiver):
             'message': alpha
          }
 
-        # TODO: respect min update interval only if the keypad is
-        # repeating the same message or cycling between a set of
-        # messages
-
         now = datetime.now()
         delta = now - self._lastpartitionupdate
         if delta < timedelta(seconds=self._config.ENVISAKEYPADUPDATEINTERVAL):
@@ -452,14 +448,11 @@ class EnvisalinkClient(LineOnlyReceiver):
             # Update zone status if the keypad is reporting a fault.
             if alpha.startswith("FAULT") and not flags.ready:
                 zoneNumber = int(userOrZone)
-                if self.updateZoneStatus(zoneNumber, "open"):
-                    # Send to plugin if zone status has changed.
-                    for plugin in self.plugins:
-                        plugin.zoneDump(ALARMSTATE['zone'])
+                self.updateZoneStatus(zoneNumber, "open")
             self.setPartitionStatus(partitionNumber, newStatus)
 
             for plugin in self.plugins:
-                plugin.keypadUpdate(ALARMSTATE)
+                plugin.sendUpdate(ALARMSTATE)
 
     def updateZoneStatus(self, zoneNumber, zoneStatus):
         zoneName = self._config.ZONENAMES[zoneNumber]
@@ -502,10 +495,6 @@ class EnvisalinkClient(LineOnlyReceiver):
             # when zones are open.
             if (zoneStatus == 'closed'):
                 self.updateZoneStatus(zoneNumber, zoneStatus)
-
-        # Send to plugin
-        for plugin in self.plugins:
-            plugin.zoneDump(ALARMSTATE['zone'])
 
     def handle_partition_state_change(self, data):
         self._has_partition_state_changed = True
@@ -558,10 +547,6 @@ class EnvisalinkClient(LineOnlyReceiver):
             for zoneNumber, zoneInfo in ALARMSTATE['zone'].items():
                 self.updateZoneStatus(zoneNumber, 'closed')
 
-        # Send to plugin
-        for plugin in self.plugins:
-            plugin.partitionStatus(partitionNumber, statusMap)
-
     def handle_realtime_cid_event(self, data):
         eventTypeInt = int(data[0])
         eventType = evl_CID_Qualifiers[eventTypeInt]
@@ -575,40 +560,6 @@ class EnvisalinkClient(LineOnlyReceiver):
         logging.debug('CID Description is ' + cidEvent['label'])
         logging.debug('Partition is ' + partition)
         logging.debug(cidEvent['type'] + ' value is ' + str(zoneOrUser))
-
-        # notify plugins about if it is an event about arming or alarm
-        if cidEvent['type'] == 'user':
-            currentUser = self._config.ALARMUSERNAMES[int(zoneOrUser)]
-            if not currentUser: currentUser = 'Unknown!'
-            zone = -1
-            zoneName = 'N/A'
-        if cidEvent['type'] == 'zone':
-            zone = int(zoneOrUser)
-            zoneName = self._config.ZONENAMES[zone]
-            if not zoneName: zoneName = 'Unknown!'
-            currentUser = 'N/A'
-        logging.debug('Mapped User is ' + currentUser + '. Mapped Zone is ' + zoneName)
-        if cidEventInt == 401 and eventTypeInt == 3:  # armed away or instant/max
-            for plugin in self.plugins:
-                plugin.armedAway(currentUser)
-        if cidEventInt == 441 and eventTypeInt == 3:  # armed home
-            for plugin in self.plugins:
-                plugin.armedHome(currentUser)
-        if cidEventInt == 401 and eventTypeInt == 1:  # disarmed away
-            for plugin in self.plugins:
-                plugin.disarmedAway(currentUser)
-        if cidEventInt == 441 and eventTypeInt == 1:  # disarmed away
-            for plugin in self.plugins:
-                plugin.disarmedHome(currentUser)
-        if cidEventInt in range(100, 164) and eventTypeInt == 1:   # alarm triggered
-            for plugin in self.plugins:
-                plugin.alarmTriggered(cidEvent['label'], zone, zoneName)
-        if cidEventInt in range(100, 164) and eventTypeInt == 3:   # alarm in memory cleared
-            for plugin in self.plugins:
-                plugin.alarmCleared(cidEvent['label'], zone, zoneName)
-        if cidEventInt is 406 and eventTypeInt == 1:              # alarm cancelled by user
-            for plugin in self.plugins:
-                plugin.alarmCleared(cidEvent['label'], zone, zoneName)
 
     # returns the current time in a human-readable format, optionally
     # offset by a number of seconds.
@@ -638,9 +589,6 @@ class EnvisalinkClient(LineOnlyReceiver):
 
             # update zone state
             ALARMSTATE['zone'][zoneNumber].update(zoneInfo)
-
-        for plugin in self.plugins:
-            plugin.zoneDump(ALARMSTATE['zone'])
 
     # convert a zone dump into something humans can make sense of
     def convertZoneDump(self, theString):
@@ -722,36 +670,43 @@ class AlarmServer(Resource):
     def __init__(self, config):
         Resource.__init__(self)
 
-        self._triggerid = reactor.addSystemEventTrigger('before', 'shutdown', self.shutdownEvent)
+        self._triggerid = reactor.addSystemEventTrigger('before', 'shutdown',
+                                                        self.shutdownEvent)
 
         # Create Envisalink client connection
         self._envisalinkClientFactory = EnvisalinkClientFactory(config)
-        self._envisaconnect = reactor.connectTCP(config.ENVISALINKHOST, config.ENVISALINKPORT, self._envisalinkClientFactory)
+        self._envisaconnect = reactor.connectTCP(config.ENVISALINKHOST,
+                                                 config.ENVISALINKPORT,
+                                                 self._envisalinkClientFactory)
 
         # Store config
         self._config = config
 
-        root = Resource()
-        rootFilePath = sys.path[0] + os.sep + 'ext'
-        root.putChild('app', File(rootFilePath))
-        root.putChild('img', File(rootFilePath))
-        root.putChild('api', self)
-        factory = Site(root)
-        # conditionally import twisted ssl to help avoid unwanted depdencies and import issues on some systems
-        if config.LISTENTYPE.lower() == "tcp":
-            self._port = reactor.listenTCP(config.LISTENPORT, factory)
-        elif config.LISTENTYPE.lower() == "ssl":
-            from twisted.internet import ssl
-            self._port = reactor.listenSSL(config.LISTENPORT, factory,
-                                           ssl.DefaultOpenSSLContextFactory(config.KEYFILE, config.CERTFILE))
-        else:
-            logging.warning("AlarmServer listen type %s unknown, server not started.", config.LISTENTYPE)
+        # disable the web server
+        # root = Resource()
+        # rootFilePath = sys.path[0] + os.sep + 'ext'
+        # root.putChild('app', File(rootFilePath))
+        # root.putChild('img', File(rootFilePath))
+        # root.putChild('api', self)
+        # factory = Site(root)
+        # # conditionally import twisted ssl to help avoid unwanted
+        # # depdencies and import issues on some systems
+        # if config.LISTENTYPE.lower() == "tcp":
+        #     self._port = reactor.listenTCP(config.LISTENPORT, factory)
+        # elif config.LISTENTYPE.lower() == "ssl":
+        #     from twisted.internet import ssl
+        #     self._port = reactor.listenSSL(
+        #         config.LISTENPORT, factory,
+        #         ssl.DefaultOpenSSLContextFactory(config.KEYFILE, config.CERTFILE))
+        # else:
+        #     logging.warning("AlarmServer listen type %s unknown, server not started.",
+        #                     config.LISTENTYPE)
 
     def shutdownEvent(self):
         global shuttingdown
         shuttingdown = True
-        logging.debug("Shutting down AlarmServer...")
-        self._port.stopListening()
+        #logging.debug("Shutting down AlarmServer...")
+        #self._port.stopListening()
         logging.debug("Disconnecting from Envisalink...")
         self._envisaconnect.disconnect()
 
@@ -839,9 +794,8 @@ if __name__ == "__main__":
         loggingconfig['filename'] = config.LOGFILE
     logging.basicConfig(**loggingconfig)
 
-    logging.info('Alarm Server Starting')
-    logging.info('Currently Supporting Envisalink 2DS/3 only')
-    logging.info('Tested on a Honeywell Vista 15p + EVL-3')
+    logging.info('AlarmServer Starting')
+    logging.info('Tested on a Honeywell Vista 20p + EVL-4')
 
     # allow Twisted to hook into our logging
     observer = log.PythonLoggingObserver()

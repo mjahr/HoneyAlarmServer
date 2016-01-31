@@ -50,66 +50,19 @@ class SmartthingsPlugin(BasePlugin):
         self._shutdowntriggerid = reactor.addSystemEventTrigger(
             'before', 'shutdown', self._shutdownEventHandler)
 
-    def keypadUpdate(self, statusMap):
+    # Sends a regular polling update to SmartThings.
+    def sendUpdate(self, statusMap):
         self.sendApiRequest("update", statusMap)
 
-    def armedAway(self, user):
-        message = "Security system armed away by " + user
-        self.postPanelUpdate("ARMED_AWAY", message, user)
-
-    def armedHome(self, user):
-        message = "Security system armed home by " + user
-        self.postPanelUpdate("ARMED_HOME", message, user)
-
-    def disarmedAway(self, user):
-        message = "Security system disarmed from away status by " + user
-        self.postPanelUpdate("DISARMED_AWAY", message, user)
-
-    def disarmedHome(self, user):
-        message = "Security system disarmed from home status by " + user
-        self.postPanelUpdate("DISARMED_AWAY", message, user)
-
-    def envisalinkUnresponsive(self, condition):
-        message = "Envisalink became unresponsive: %s" % condition
-        self.postPanelUpdate("ERROR", message, None)
-
-    def postPanelUpdate(self, status, message, user):
-        payload = { 'message': message, 'status': status }
-        if user is not None:
-            payload['user'] = user
-        # self.sendApiRequest("panel", payload)
-
-    def alarmTriggered(self, alarmDescription, zone, zoneName):
-        self.postAlarm("IN_ALARM", alarmDescription, zone, zoneName)
-
-    def alarmCleared(self, alarmDescription, zone, zoneName):
-        self.postAlarm("ALARM_IN_MEMORY", alarmDescription, zone, zoneName)
-
-    def postAlarm(self, status, description, zone, zoneName):
-        # sensorType = self.getZoneType(zone, status)
-        message =  ("Alarm %s in %s: %s" % status, zoneName, description)
-        logging.debug(message);
-        payload = { 'message': message,
-                    'description': description,
-                    'zonename': zoneName }
-        path = "/".join(str(x) for x in ["alarm", zone, status])
-        # self.sendApiRequest(path, payload)
-
-    def zoneDump(self, statusMap):
-        self.sendApiRequest("zones", statusMap)
-
-    def partitionStatus(self, partition, statusMap):
-        path = "/".join(str(x) for x in ["partition", partition])
-        self.sendApiRequest(path, statusMap)
+    # TODO: sends an error to SmartThings.
+    def sendError(self, errorState):
+        message = "Envisalink became unresponsive: %s" % errorState
+        # self.postPanelUpdate("ERROR", message, None)
 
     # Send an api request to SmartThings, asynchronously.
     # path: relative to self._urlbase
     # payload: dict used as body of the post, json-encoded.
     def sendApiRequest(self, path, payload):
-        # TODO HACK: ignore everything but updates
-        if path != "update":
-            return
-
         # because we're sending this asynchronously, dump the payload
         # to a string so it's not affected by future updates
         data = json.dumps(payload)
@@ -122,6 +75,7 @@ class SmartthingsPlugin(BasePlugin):
             try:
                 self._queue.get(block=False)
             except Queue.Empty as e:
+                # shouldn't get here except in some extreme race condition
                 pass
 
         try:
@@ -132,9 +86,9 @@ class SmartthingsPlugin(BasePlugin):
                           "qsize=%d path=%s payload=%s",
                           self._queue.qsize(), path, payload)
     ####
-    # Methods related to the api thread
+    # Methods used by the api thread
 
-    # callback which runs before shutdown: signal the api thread to exit
+    # Callback which runs before shutdown: signal the api thread to exit.
     def _shutdownEventHandler(self):
         logging.info("Shutting down SmartThings api thread")
         # set the is_exiting event so the loop will exit
@@ -159,6 +113,11 @@ class SmartthingsPlugin(BasePlugin):
 
     # Sends an api request synchronously, should only run in worker thread.
     def _postApiSynchronous(self, path, payload):
+        # suppress identical updates within a specified interval.
+        # TODO: when multiple zones are open simultaneously the keypad
+        # will cycle between a handful of messages.  We should really
+        # store the last N messages within the interval and suppress
+        # updates identical to any of them.
         now = datetime.now()
         delta = now - self._last_update_time
         if (delta < timedelta(seconds=self._REPEAT_UPDATE_INTERVAL) and
