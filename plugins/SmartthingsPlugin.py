@@ -4,7 +4,8 @@ import Queue
 import requests
 import threading
 from basePlugin import BasePlugin
-#from threading import Event
+from datetime import datetime
+from datetime import timedelta
 from twisted.internet import reactor
 
 class SmartthingsPlugin(BasePlugin):
@@ -26,10 +27,18 @@ class SmartthingsPlugin(BasePlugin):
         # max number of requests to enqueue before dropping them
         self._QUEUE_SIZE  = self.read_config_var(
             'smartthings', 'queue_size', 100, 'int')
+        # post updates less frequently when nothing has changed.
+        self._REPEAT_UPDATE_INTERVAL  = self.read_config_var(
+            'smartthings', 'repeat_update_interval', 55, 'int')
 
-        #  URL example: ${callbackurl_base}/${callbackurl_app_id}/panel/${code}/${zoneorpartitionnumber}?access_token=${callbackurl_access_token}
+        #  URL example: ${url_base}/${app_id}/update?access_token=${token}
         self._urlbase = self._CALLBACKURL_BASE + "/" + self._CALLBACKURL_APP_ID
         logging.info("SmartThings url: %s" % self._urlbase)
+
+        # keep track of the last update posted so we can skip
+        # duplicate posts
+        self._last_update_payload = ""
+        self._last_update_time = datetime.min
 
         # set up a queue and thread to send api request asynchronously
         self._is_exiting = threading.Event()
@@ -40,6 +49,9 @@ class SmartthingsPlugin(BasePlugin):
 
         self._shutdowntriggerid = reactor.addSystemEventTrigger(
             'before', 'shutdown', self._shutdownEventHandler)
+
+    def keypadUpdate(self, statusMap):
+        self.sendApiRequest("update", statusMap)
 
     def armedAway(self, user):
         message = "Security system armed away by " + user
@@ -65,7 +77,7 @@ class SmartthingsPlugin(BasePlugin):
         payload = { 'message': message, 'status': status }
         if user is not None:
             payload['user'] = user
-        self.sendApiRequest("panel", payload)
+        # self.sendApiRequest("panel", payload)
 
     def alarmTriggered(self, alarmDescription, zone, zoneName):
         self.postAlarm("IN_ALARM", alarmDescription, zone, zoneName)
@@ -81,7 +93,7 @@ class SmartthingsPlugin(BasePlugin):
                     'description': description,
                     'zonename': zoneName }
         path = "/".join(str(x) for x in ["alarm", zone, status])
-        self.sendApiRequest(path, payload)
+        # self.sendApiRequest(path, payload)
 
     def zoneDump(self, statusMap):
         self.sendApiRequest("zones", statusMap)
@@ -94,8 +106,12 @@ class SmartthingsPlugin(BasePlugin):
     # path: relative to self._urlbase
     # payload: dict used as body of the post, json-encoded.
     def sendApiRequest(self, path, payload):
-        # because we're sending this asynchronously, dump the
-        # payload to a string to ignore future updates to the dict
+        # TODO HACK: ignore everything but updates
+        if path != "update":
+            return
+
+        # because we're sending this asynchronously, dump the payload
+        # to a string so it's not affected by future updates
         data = json.dumps(payload)
 
         # if the queue is full, pull off the oldest item to make
@@ -143,6 +159,13 @@ class SmartthingsPlugin(BasePlugin):
 
     # Sends an api request synchronously, should only run in worker thread.
     def _postApiSynchronous(self, path, payload):
+        now = datetime.now()
+        delta = now - self._last_update_time
+        if (delta < timedelta(seconds=self._REPEAT_UPDATE_INTERVAL) and
+            payload == self._last_update_payload):
+            logging.debug("Skipping repeat update at %s seconds", delta)
+            return
+
         try:
             logging.debug("Posting smartthings api to /%s", path)
             url = (self._urlbase + "/" + path +
@@ -157,5 +180,7 @@ class SmartthingsPlugin(BasePlugin):
             else:
                 logging.debug("Successfully posted smartthings api; "
                               "path=%s payload=%s", path, payload)
+                self._last_update_time = now
+                self._last_update_payload = payload
         except requests.exceptions.RequestException as e:
             logging.error("Error communicating with smartthings server: " + str(e))

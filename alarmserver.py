@@ -458,6 +458,9 @@ class EnvisalinkClient(LineOnlyReceiver):
                         plugin.zoneDump(ALARMSTATE['zone'])
             self.setPartitionStatus(partitionNumber, newStatus)
 
+            for plugin in self.plugins:
+                plugin.keypadUpdate(ALARMSTATE)
+
     def updateZoneStatus(self, zoneNumber, zoneStatus):
         zoneName = self._config.ZONENAMES[zoneNumber]
         # only bother to update if zone name is defined in config
@@ -488,10 +491,17 @@ class EnvisalinkClient(LineOnlyReceiver):
         beBin = bin(int(beHex, 16))[2:].zfill(64)
 
         for zoneNumber in range(1,65):
-            # zone numbers are 1-indexed.  big-endian means zone 1 is the last bit
+            # zone numbers are 1-indexed.  big-endian means zone 1 is
+            # the last bit, so zone i is the (64-i)th bit.
             zoneBit = beBin[64 - zoneNumber]
             zoneStatus = 'open' if zoneBit == '1' else 'closed'
-            self.updateZoneStatus(zoneNumber, zoneStatus)
+
+            # zone_state_change will often continue reporting zones as
+            # open when they have already closed, so we ignore open
+            # zones here and instead rely on keypad update to tell us
+            # when zones are open.
+            if (zoneStatus == 'closed'):
+                self.updateZoneStatus(zoneNumber, zoneStatus)
 
         # Send to plugin
         for plugin in self.plugins:
@@ -544,7 +554,9 @@ class EnvisalinkClient(LineOnlyReceiver):
         statusMap.update(newStatus)
         logging.debug('Partition %d status: %s', partitionNumber, str(newStatus))
         if statusMap['ready']:
-            self.closeAllZones()
+            # close all zones and send a zone status update if necessary
+            for zoneNumber, zoneInfo in ALARMSTATE['zone'].items():
+                self.updateZoneStatus(zoneNumber, 'closed')
 
         # Send to plugin
         for plugin in self.plugins:
@@ -618,7 +630,7 @@ class EnvisalinkClient(LineOnlyReceiver):
             logMessage = ("%s (zone %i) %s" % (zoneName, zoneNumber, zoneInfo))
             logging.debug(logMessage)
             if ALARMSTATE['zone'][zoneNumber]['status'] != zoneInfo['status']:
-                logging.info("Zone state change: " + logMessage)
+                logging.info("zone state change: " + logMessage)
 
                 # Correct lastChanged time by closedSeconds, which is 0 if open.
                 zoneInfo['lastChanged'] = self.getTimeText(
@@ -628,27 +640,6 @@ class EnvisalinkClient(LineOnlyReceiver):
             ALARMSTATE['zone'][zoneNumber].update(zoneInfo)
 
         for plugin in self.plugins:
-            plugin.zoneDump(ALARMSTATE['zone'])
-
-    # close all zones and send a zone status update if necessary
-    def closeAllZones(self):
-        numChanged = 0
-        timeStr = self.getTimeText()
-        for zoneNumber, zoneInfo in ALARMSTATE['zone'].items():
-            if zoneInfo['status'] != 'closed':
-                ++numChanged
-                zoneName = zoneInfo['name']
-                logging.info("zone state change: %s (zone %i) %s",
-                             zoneName, zoneNumber, zoneInfo)
-                ALARMSTATE['zone'][zoneNumber].update({
-                    'message': 'closed at ' + timeStr,
-                    'status': 'closed',
-                    'closedSeconds': 0,
-                    'lastChanged': timeStr
-                })
-
-        if numChanged > 0:
-            logging.debug("Closed %d zones", numChanged)
             plugin.zoneDump(ALARMSTATE['zone'])
 
     # convert a zone dump into something humans can make sense of
