@@ -20,17 +20,9 @@ preferences {
 }
 
 mappings {
-  // regular polling update for zones, as well as zone state changes
-  path("/zones") {
-    action: [ POST: "updateZones" ]
-  }
-  // updates for partition state change and keypad updates
-  path("/partition/:partition") {
-    action: [ POST: "updatePartition" ]
-  }
-  // alarms, arm/disarm, and other real-time updates
-  path("/panel") {
-    action: [ POST: "updatePanel" ]
+  // polling state update for partitions and zones
+  path("/update") {
+    action: [ POST: "update" ]
   }
 }
 
@@ -89,11 +81,11 @@ private def zoneDeviceDni(zoneNumber) {
   return "ademcoZone" + zoneNumber
 }
 
-// Extracts keys from a zone map and sorts by number.
-def getOrderedZoneList(Map zoneMap) {
-  return zoneMap.keySet().collect { it as int }.sort().collect { it as String }
+// Extracts keys from a map and sorts by number.
+def getOrderedKeyList(Map map) {
+  return map.keySet().collect { it as int }.sort().collect { it as String }
 }
-// For some reason I can't call getOrderedZoneList(state.zones).
+// For some reason I can't call getOrderedKeyList(state.zones).
 def getOrderedStateZones() {
   return state.zones.keySet().collect { it as int }.sort().collect { it as String }
 }
@@ -108,11 +100,13 @@ def initialize() {
     def initialState = [ "message": "Uninitialized" ]
     addChildDevice(app.namespace, "Ademco Keypad", keypadDni(), null, initialState)
   }
-  if (getPanelDevice() == null) {
-    log.info("Creating panel device")
-    def initialState = [ "status": "Uninitialized" ]
-    addChildDevice(app.namespace, "Ademco Panel", panelDni(), null, initialState)
-  }
+  log.info("deleting panel device")
+  deleteChildDevice(panelDni())
+  // if (getPanelDevice() == null) {
+  //   log.info("Creating panel device")
+  //   def initialState = [ "status": "Uninitialized" ]
+  //   addChildDevice(app.namespace, "Ademco Panel", panelDni(), null, initialState)
+  // }
 
   for (zoneNumber in getOrderedStateZones()) {
     // Get preference for each zone.
@@ -134,65 +128,52 @@ def initialize() {
   }
 }
 
-private updateZones() {
-  log.debug "request.JSON: " + request.JSON
-  state.zones = request.JSON
-  def panelDevice = getPanelDevice()
-  log.debug "sending zone update to ${panelDevice.name}"
+// Polling update
+private update() {
+  state.lastUpdate = request.JSON
+  updateZoneState(request.JSON?.zone)
+  def partitionMap = request.JSON?.partition
+  for (partitionNumber in getOrderedKeyList(partitionMap)) {
+    updatePartitionState(partitionNumber, partitionMap[partitionNumber])
+  }
+}
 
-  for (zoneNumber in getOrderedZoneList(request.JSON)) {
-    def zoneStateMap = request.JSON[zoneNumber]
-    def name = zoneStateMap?.name
-    def status = zoneStateMap?.status
-    def message = zoneStateMap?.message
-    log.info "updateZones: $zoneNumber '$name' is $status: $message"
-    panelDevice.sendEvent([name: "${name}", value: "${status}",
-                           displayed: false,
-                           descriptionText: "${name}: ${message}"])
+private updateZoneState(Map zoneStateMap) {
+  state.zones = zoneStateMap
+  def keypadDevice = getkeypadDevice()
 
+  for (zoneNumber in getOrderedKeyList(zoneStateMap)) {
+    def zoneState = zoneStateMap[zoneNumber]
+    def name = zoneState?.name
+    def status = zoneState?.status
+    def message = zoneState?.message
     def zoneDevice = getZoneDevice(zoneNumber)
     if (zoneDevice) {
-      log.info "updateZone: setting ${zoneDevice} state to ${status}"
+      log.debug "updateZone: ${zoneDevice} is ${status}"
       zoneDevice.setState(status)
+    } else {
+      log.debug "updateZones: no device for zone $zoneNumber '$name' is $status: $message"
+      keypadDevice.sendEvent([name: "${name}", value: "${status}", displayed: false,
+			      descriptionText: "${name}: ${message}"])
     }
   }
 }
 
-private updatePartition() {
-  def partition = params.partition
-  def message = request.JSON?.message
-  log.info "updatePartition: '$message'"
-  log.debug "request.JSON: " + request.JSON
-
-  // Add every field from the json payload as an event.  SmartThings
+private updatePartitionState(String partition, Map partitionStateMap) {
+  // Add every field from the partition state as an event.  SmartThings
   // will dedup events where necessary.
-  def panelDevice = getPanelDevice()
-  log.debug "sending partition update to ${panelDevice.name}"
-  for (e in request.JSON) {
-    panelDevice.sendEvent([name: e.key, value: e.value, displayed: false,
-                           descriptionText: "${e.key} is ${e.value}"])
+  def keypadDevice = getKeypadDevice()
+  log.debug "sending partition state update to ${keypadDevice.name}"
+  for (e in partitionStateMap) {
     if (e.key == "message") {
-      def keypadDevice = getKeypadDevice()
+      // Messages are special: display them in the activity feed.
       keypadDevice.sendEvent([name: e.key, value: e.value,
                               descriptionText: e.value])
+    } else {
+      // For every other variable, update the state on the keypad but
+      // do not display in activity feed.
+      keypadDevice.sendEvent([name: e.key, value: e.value, displayed: false,
+			      descriptionText: "${e.key} is ${e.value}"])
     }
   }
-}
-
-private updateAlarm() {
-  def zone = params.zone
-  def status = params.status
-  def zonename = request.JSON?.zonename
-  def message = request.JSON?.message
-  log.info "updateAlarm: $zone '$zonename' is $status: $message"
-  log.debug "request.JSON: " + request.JSON
-
-  if (paneldevice) {
-    sendEvent(paneldevice, name: "alarm", value: "${status}", displayed: false)
-  }
-}
-
-private updatePanel() {
-  def message = request.JSON?.message
-  log.info "updatePanel: $message"
 }
