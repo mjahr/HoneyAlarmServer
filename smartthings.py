@@ -3,19 +3,19 @@ import logging
 import Queue
 import requests
 import threading
-from basePlugin import BasePlugin
+from baseConfig import BaseConfig
 from datetime import datetime
 from datetime import timedelta
 from twisted.internet import reactor
 
-class SmartthingsPlugin(BasePlugin):
+class SmartThings(BaseConfig):
     # read smartthings config var
     def read_st_config_var(self, varname):
         return self.read_config_var('smartthings', varname, 'not_provided', 'str')
 
     def __init__(self, configfile):
         # call ancestor for common setup
-        super(SmartthingsPlugin, self).__init__(configfile)
+        super(SmartThings, self).__init__(configfile)
 
         self._CALLBACKURL_BASE         = self.read_st_config_var('callbackurl_base')
         self._CALLBACKURL_APP_ID       = self.read_st_config_var('callbackurl_app_id')
@@ -122,11 +122,11 @@ class SmartthingsPlugin(BasePlugin):
         delta = now - self._last_update_time
         if (delta < timedelta(seconds=self._REPEAT_UPDATE_INTERVAL) and
             payload == self._last_update_payload):
-            logging.info("Skipping repeat update at %s seconds", delta)
+            logging.debug("Skipping repeat update at %s seconds", delta)
             return
 
         try:
-            logging.info("Posting smartthings api to /%s", path)
+            logging.debug("Posting smartthings api to /%s", path)
             url = (self._urlbase + "/" + path +
                    "?access_token=" + self._CALLBACKURL_ACCESS_TOKEN)
             response = requests.post(url, data=payload, timeout=self._API_TIMEOUT)

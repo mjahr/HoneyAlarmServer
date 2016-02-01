@@ -1,9 +1,10 @@
 #!/usr/bin/python
 # Alarm Server
-# Supporting Envisalink 2DS/3
+# Supporting Envisalink 2DS/3/4
 # Original version for DSC Written by donnyk+envisalink@gmail.com,
 # lightly improved by leaberry@gmail.com
 # Honeywell version adapted by matt.weinecke@gmail.com
+# Significant rewrite by michaelj@gmail.com
 #
 # This code is under the terms of the GPL v3 license.
 
@@ -25,8 +26,8 @@ from twisted.internet.protocol import ReconnectingClientFactory
 from twisted.python import log
 
 from envisalinkdefs import *
-from plugins.basePlugin import BasePlugin
 from baseConfig import BaseConfig
+from smartthings import SmartThings
 from datetime import datetime
 from datetime import timedelta
 
@@ -181,12 +182,8 @@ class EnvisalinkClient(LineOnlyReceiver):
         # Set config
         self._config = config
 
-        # find plugins and load/config them
-        self.plugins = []
-        pluginClasses = BasePlugin.find_subclasses("./plugins/")
-        for plugin in pluginClasses:
-            plugincfg = "./plugins/" + plugin.__name__ + ".cfg"
-            self.plugins.append(plugin(plugincfg))
+        # config smartthings
+        self._smartthings = SmartThings("smartthings.cfg")
 
         self._commandinprogress = False
         now = datetime.now()
@@ -218,8 +215,7 @@ class EnvisalinkClient(LineOnlyReceiver):
                 delta > timedelta(seconds=self._config.ENVISACOMMANDTIMEOUT)):
                 message = "Timed out waiting for command response, resetting connection..."
                 logging.error(message)
-                for plugin in self.plugins:
-                    plugin.sendError(message)
+                self._smartthings.sendError(message)
                 self.logout()
                 return
 
@@ -245,8 +241,7 @@ class EnvisalinkClient(LineOnlyReceiver):
                 # reset connection
                 message = "No recent keypad updates from envisalink, resetting connection..."
                 logging.error(message)
-                for plugin in self.plugins:
-                    plugin.sendError(message)
+                self._smartthings.sendError(message)
                 self.logout()
                 return
 
@@ -433,8 +428,8 @@ class EnvisalinkClient(LineOnlyReceiver):
                 self.updateZoneStatus(zoneNumber, "open")
             self.setPartitionStatus(partitionNumber, newStatus)
 
-            for plugin in self.plugins:
-                plugin.sendUpdate(ALARMSTATE)
+            # Send update to SmartThings
+            self._smartthings.sendUpdate(ALARMSTATE)
 
     def updateZoneStatus(self, zoneNumber, zoneStatus):
         zoneName = self._config.ZONENAMES[zoneNumber]
