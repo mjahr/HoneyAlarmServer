@@ -122,11 +122,11 @@ class SmartthingsPlugin(BasePlugin):
         delta = now - self._last_update_time
         if (delta < timedelta(seconds=self._REPEAT_UPDATE_INTERVAL) and
             payload == self._last_update_payload):
-            logging.debug("Skipping repeat update at %s seconds", delta)
+            logging.info("Skipping repeat update at %s seconds", delta)
             return
 
         try:
-            logging.debug("Posting smartthings api to /%s", path)
+            logging.info("Posting smartthings api to /%s", path)
             url = (self._urlbase + "/" + path +
                    "?access_token=" + self._CALLBACKURL_ACCESS_TOKEN)
             response = requests.post(url, data=payload, timeout=self._API_TIMEOUT)
