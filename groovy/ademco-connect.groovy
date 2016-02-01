@@ -15,10 +15,6 @@ definition(
 
 import groovy.json.JsonBuilder
 
-preferences {
-  page(name: "zones", title: "Zones", content: "zonePage")
-}
-
 mappings {
   // polling state update for partitions and zones
   path("/update") {
@@ -26,16 +22,18 @@ mappings {
   }
 }
 
+preferences {
+  page(name: "zones", title: "Zones", content: "zonePage")
+}
+
 // Pref page that allows selecting a device type for each zone.
 def zonePage() {
-  log.debug("zonePage()")
   def zoneTypes = [ "" : "None",
                     "Ademco Door Sensor"   : "Door Sensor",
                     "Ademco Motion Sensor" : "Motion Sensor",
                     "Ademco Smoke Sensor"  : "Smoke Sensor" ]
 
   return dynamicPage(name: "zones", title: "Select zones") {
-    log.debug("building zonePage dynamicPage")
     section("Zone sensors") {
       paragraph("Select zones to create sensors for:")
       for (zoneNumber in getOrderedStateZones()) {
@@ -48,7 +46,6 @@ def zonePage() {
               metadata: [values: zoneTypes])
       }
     }
-    log.debug("done with zonePage dynamicPage")
   }
 }
 
@@ -69,14 +66,12 @@ def uninstalled() {
 
 // Keypad device is a child device which displays the alarm system status.
 private def getKeypadDevice() { return getChildDevice(keypadDni()) }
-private def getPanelDevice()  { return getChildDevice(panelDni())  }
 private def getZoneDevice(zoneNumber) {
   return getChildDevice(zoneDeviceDni(zoneNumber))
 }
 
 // Identifiers used for child devices.
 private def keypadDni() { return "ademcoKeypad" }
-private def panelDni()  { return "ademcoPanel"  }
 private def zoneDeviceDni(zoneNumber) {
   return "ademcoZone" + zoneNumber
 }
@@ -100,13 +95,6 @@ def initialize() {
     def initialState = [ "message": "Uninitialized" ]
     addChildDevice(app.namespace, "Ademco Keypad", keypadDni(), null, initialState)
   }
-  log.info("deleting panel device")
-  deleteChildDevice(panelDni())
-  // if (getPanelDevice() == null) {
-  //   log.info("Creating panel device")
-  //   def initialState = [ "status": "Uninitialized" ]
-  //   addChildDevice(app.namespace, "Ademco Panel", panelDni(), null, initialState)
-  // }
 
   for (zoneNumber in getOrderedStateZones()) {
     // Get preference for each zone.
@@ -141,7 +129,6 @@ private update() {
 private updateZoneState(Map zoneStateMap) {
   state.zones = zoneStateMap
   def keypadDevice = getKeypadDevice()
-
   for (zoneNumber in getOrderedKeyList(zoneStateMap)) {
     def zoneState = zoneStateMap[zoneNumber]
     def name = zoneState?.name
@@ -152,9 +139,13 @@ private updateZoneState(Map zoneStateMap) {
       log.debug "updateZone: ${zoneDevice} is ${status}"
       zoneDevice.setState(status)
     } else {
-      log.debug "updateZones: no device for zone $zoneNumber '$name' is $status: $message"
-      keypadDevice.sendEvent([name: "${name}", value: "${status}", displayed: false,
-			      descriptionText: "${name}: ${message}"])
+      // If there's no device for this zone, update the state on the
+      // keypad but don't display it in the activity feed.
+      log.debug("updateZones: no device for zone $zoneNumber '$name' "
+		"is $status: $message")
+      keypadDevice.sendEvent(
+	[name: "${name}", value: "${status}", displayed: false,
+	 descriptionText: "${name}: ${message}"])
     }
   }
 }
