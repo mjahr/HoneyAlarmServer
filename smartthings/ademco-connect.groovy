@@ -140,7 +140,7 @@ private update() {
 
 private updateZoneState(Map zoneStateMap) {
   state.zones = zoneStateMap
-  def keypadDevice = getkeypadDevice()
+  def keypadDevice = getKeypadDevice()
 
   for (zoneNumber in getOrderedKeyList(zoneStateMap)) {
     def zoneState = zoneStateMap[zoneNumber]
