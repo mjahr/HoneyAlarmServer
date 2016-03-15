@@ -20,14 +20,13 @@ class SmartThings(BaseConfig):
         self._CALLBACKURL_BASE         = self.read_st_config_var('callbackurl_base')
         self._CALLBACKURL_APP_ID       = self.read_st_config_var('callbackurl_app_id')
         self._CALLBACKURL_ACCESS_TOKEN = self.read_st_config_var('callbackurl_access_token')
-        self._CALLBACKURL_EVENT_CODES  = self.read_st_config_var('callbackurl_event_codes')
         # http timeout in seconds for api requests
         self._API_TIMEOUT = self.read_config_var(
             'smartthings', 'api_timeout', 10, 'int')
         # max number of requests to enqueue before dropping them
         self._QUEUE_SIZE  = self.read_config_var(
             'smartthings', 'queue_size', 100, 'int')
-        # post updates less frequently when nothing has changed.
+        # Interval for posting updates when nothing has changed; default to 55 seconds.
         self._REPEAT_UPDATE_INTERVAL  = self.read_config_var(
             'smartthings', 'repeat_update_interval', 55, 'int')
 
@@ -134,8 +133,8 @@ class SmartThings(BaseConfig):
                                             requests.codes.created,
                                             requests.codes.accepted]:
                 logging.error("Problem posting a smartthings notification; "
-                              "url: %s payload: %s status: %d response: %s",
-                              url, payload, response.status_code, response.text)
+                              "url: %s status: %d response: %s",
+                              url, response.status_code, response.text)
             else:
                 logging.debug("Successfully posted smartthings api; "
                               "path=%s payload=%s", path, payload)
