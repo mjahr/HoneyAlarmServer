@@ -139,7 +139,7 @@ class EnvisalinkClientFactory(ReconnectingClientFactory):
         self._config = config
 
     def buildProtocol(self, addr):
-        logging.debug("%s connection estblished to %s:%s", addr.type, addr.host, addr.port)
+        logging.debug("%s connection established to %s:%s", addr.type, addr.host, addr.port)
         logging.debug("resetting connection delay")
         self.resetDelay()
         self.envisalinkClient = EnvisalinkClient(self._config)
@@ -183,8 +183,7 @@ class EnvisalinkClient(LineOnlyReceiver):
         self._config = config
 
         # config smartthings
-        # TODO: use same config file as alarmserver
-        self._smartthings = SmartThings("smartthings.cfg")
+        self._smartthings = SmartThings("alarmserver.cfg")
 
         self._commandinprogress = False
         now = datetime.now()

@@ -19,6 +19,6 @@ This is still beta software.  SmartAlarmServer was tested with Envisalink 4 and 
 + No way to arm/disarm the Vista panel remotely or trigger the siren.  The idea is to use SmartThings Smart Home Monitor as the security system instead of the Vista panel alarm.
 
 Config
--------
-Please see the alarmserver-example.cfg and rename to alarmserver.cfg and
+------
+Please see alarmserver-example.cfg and rename to alarmserver.cfg and
 customize to requirements.
