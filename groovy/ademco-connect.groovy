@@ -1,5 +1,7 @@
 /*
- *  Ademco Alarm Panel integration via REST API callbacks
+ *  Ademco Alarm Panel integration via REST API updates.  This
+ *  SmartApp listens for updates sent by the SmartAlarmServer python
+ *  script.
  *
  *  Author: Mike Jahr <michaelj@gmail.com>
  */
@@ -16,9 +18,10 @@ definition(
 import groovy.json.JsonBuilder
 
 mappings {
-  // polling state update for partitions and zones
+  // Endpoint called by SmartAlarmServer to update state for
+  // partitions and zones.
   path("/update") {
-    action: [ POST: "update" ]
+    action: [ POST: "receiveUpdate" ]
   }
 }
 
@@ -28,6 +31,7 @@ preferences {
 
 // Pref page that allows selecting a device type for each zone.
 def zonePage() {
+  log.debug("Creating zone prefs page")
   def zoneTypes = [ "" : "None",
                     "Ademco Door Sensor"   : "Door Sensor",
                     "Ademco Motion Sensor" : "Motion Sensor",
@@ -50,29 +54,31 @@ def zonePage() {
 }
 
 def installed() {
-  log.debug "Installed!"
+  log.debug("Installed!")
   initialize()
 }
 
 def updated() {
-  log.debug "Updated!"
+  log.debug("Updated!")
+  unschedule()
   initialize()
 }
 
 def uninstalled() {
-  log.debug "Uninstalled!  Deleting child devices."
+  log.debug("Uninstalled!  Deleting child devices.")
   getChildDevices().each { deleteChildDevice(it) }
+  unschedule()
 }
 
 // Keypad device is a child device which displays the alarm system status.
-private def getKeypadDevice() { return getChildDevice(keypadDni()) }
-private def getZoneDevice(zoneNumber) {
+def getKeypadDevice() { return getChildDevice(keypadDni()) }
+def getZoneDevice(zoneNumber) {
   return getChildDevice(zoneDeviceDni(zoneNumber))
 }
 
 // Identifiers used for child devices.
-private def keypadDni() { return "ademcoKeypad" }
-private def zoneDeviceDni(zoneNumber) {
+def keypadDni() { return "ademcoKeypad" }
+def zoneDeviceDni(zoneNumber) {
   return "ademcoZone" + zoneNumber
 }
 
@@ -80,7 +86,8 @@ private def zoneDeviceDni(zoneNumber) {
 def getOrderedKeyList(Map map) {
   return map.keySet().collect { it as int }.sort().collect { it as String }
 }
-// For some reason I can't call getOrderedKeyList(state.zones).
+// For some reason I can't call getOrderedKeyList(state.zones), so
+// this method is a workaround.
 def getOrderedStateZones() {
   return state.zones.keySet().collect { it as int }.sort().collect { it as String }
 }
@@ -88,6 +95,11 @@ def getOrderedStateZones() {
 // Initialize takes user-specified preferences and creates child
 // devices as appropriate.
 def initialize() {
+  // Check for timeout every 5 minutes.
+  log.info("Scheduling timeout check to run every 5 minutes.")
+  unschedule()
+  runEvery5Minutes(checkForTimeout)
+
   log.info("Initializing child devices for Ademco integration")
 
   if (getKeypadDevice() == null) {
@@ -116,8 +128,56 @@ def initialize() {
   }
 }
 
-// Polling update
-private update() {
+// Scheduled to run every 5 minutes.  Verifies that the most recent
+// update is not too long ago, and posts a notification otherwise.
+def checkForTimeout() {
+  def now = now()
+  def lastUpdate = state.lastUpdateTimestamp ? state.lastUpdateTimestamp : 0
+  // compute time from last update to now
+  def updateMs = now - lastUpdate
+  def updateHours = updateMs / 1000.0 / 60.0 / 60.0
+  def updateTimeStr = formatTimeDelta(updateMs)
+  log.debug("Timeout check: last update was ${updateTimeStr} ago")
+
+  // compute time from last update to last notification
+  def lastNotify = state.lastTimeoutNotifyTimestamp ? state.lastTimeoutNotifyTimestamp : 0
+  def notifyMs = lastNotify - lastUpdate
+  def notifyHours = notifyMs / 1000.0 / 60.0 / 60.0
+
+  // notify after 15 minutes, 1 hour, and 24 hours
+  if ((updateHours > 0.25 && notifyHours < 0.25) ||
+      (updateHours > 1.0 && notifyHours < 1.0) ||
+      (updateHours > 24.0 && notifyHours < 24.0)) {
+    sendPush("Ademco alarmserver is offline; last update was ${updateTimeStr} ago")
+    state.lastTimeoutNotifyTimestamp = now
+  }
+}
+
+// Returns a time delta in ms formatted as {hh}h{mm}m{ss.uuu}s
+def formatTimeDelta(long ms) {
+  def seconds = (double) (ms / 1000.0)
+  def minutes = (long) (seconds / 60)
+  def hours = (long) (minutes / 60)
+  if (seconds < 60) {
+    return sprintf("%2.3fs", seconds)
+  } else if (minutes < 60) {
+    return sprintf("%dm%02.3fs", minutes, seconds % 60)
+  } else {
+    return sprintf("%dh%02dm%02.3fs", hours, minutes % 60, seconds % 60)
+  }
+}
+
+// Endpoint called by alarmserver
+def receiveUpdate() {
+  // notify if this is the first update since a timeout.
+  def now = now()
+  def timeStr = formatTimeDelta(now - state.lastUpdateTimestamp)
+  log.debug("Received update; last update was ${timeStr} ago")
+  if (state.lastUpdateTimestamp < state.lastTimeoutNotifyTimestamp) {
+    sendPush("Ademco alarmserver is back online; last update was ${timeStr} ago")
+  }
+
+  state.lastUpdateTimestamp = now
   state.lastUpdate = request.JSON
   updateZoneState(request.JSON?.zone)
   def partitionMap = request.JSON?.partition
@@ -126,7 +186,7 @@ private update() {
   }
 }
 
-private updateZoneState(Map zoneStateMap) {
+def updateZoneState(Map zoneStateMap) {
   state.zones = zoneStateMap
   def keypadDevice = getKeypadDevice()
   for (zoneNumber in getOrderedKeyList(zoneStateMap)) {
@@ -141,7 +201,7 @@ private updateZoneState(Map zoneStateMap) {
     } else {
       // If there's no device for this zone, update the state on the
       // keypad but don't display it in the activity feed.
-      log.debug("updateZones: no device for zone $zoneNumber '$name' "
+      log.debug("updateZones: no device for zone $zoneNumber '$name' " +
 		"is $status: $message")
       keypadDevice.sendEvent(
 	[name: "${name}", value: "${status}", displayed: false,
@@ -150,7 +210,7 @@ private updateZoneState(Map zoneStateMap) {
   }
 }
 
-private updatePartitionState(String partition, Map partitionStateMap) {
+def updatePartitionState(String partition, Map partitionStateMap) {
   // Add every field from the partition state as an event.  SmartThings
   // will dedup events where necessary.
   def keypadDevice = getKeypadDevice()
