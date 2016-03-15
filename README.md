@@ -22,3 +22,14 @@ Config
 ------
 Please see alarmserver-example.cfg and rename to alarmserver.cfg and
 customize to requirements.
+
+SmartThings Setup
+-----------------
+
+The SmartThings code lives in the "groovy" directory.  All real
+functionality lives in the Ademco Connect SmartApp; the other files
+are device handlers which have their state managed by the SmartApp.
+
+To install into SmartThings, create a SmartApp with the
+"ademco-connect.groovy", and create a device handler for each of
+the sensor types: door, keypad, motion, and smoke.
