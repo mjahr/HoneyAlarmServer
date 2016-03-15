@@ -1,23 +1,21 @@
-This project uses the [Ademco TPI provided by Eyez-On](http://forum.eyez-on.com/FORUM/viewtopic.php?f=6&t=301).  It processes events and passes commands to the Envisalink server and provides an easy to use HTTP interface for clients.
+This project uses the [Ademco TPI provided by Eyez-On](http://forum.eyez-on.com/FORUM/viewtopic.php?f=6&t=301).  It processes events and passes them to the SmartThings API.
 
-This project was originally a fork of the [AlarmServer project for DSC panels](https://github.com/juggie/AlarmServer) - credit to them for the base code.   However, the API's between DSC and Honeywell are so different that it didn't make sense to try to maintain a single codebase.
+This project started as a fork of [HoneyAlarmServer](https://github.com/MattTW/HoneyAlarmServer), which in turn was based on [AlarmServer for DSC panels](https://github.com/juggie/AlarmServer) - credit to them for the base code.   However, it ended up evolving past the point where it made sense maintain a single codebase.
 
-This is still beta software.  So far it has only been tested with an Envisalink 3 and Honeywell Vista 15p panel.
+This is still beta software.  SmartAlarmServer was tested with Envisalink 4 and Honeywell Vista 20p panel; HoneyAlarmServer was tested with an Envisalink 3 and Honeywell Vista 15p panel.
 
 #### What Works ####
 
- + keypad update and partition state updates sent by the Envisalink as documented in the TPI are tracked by the Alarm Server and can be retrieved via the Web API.  
- + Events for alarm system arm/disarm and alarm condition trigger/clear are processed and trigger plugin events.
- + HTTP calls to get current AlarmState, change Partition, and to arm, disarm and armstay the alarm system are working.  Note that these calls are currently async, the response only acknowledges that the command was sent to Envisalink, not that it was sucessfully executed.
- + Events are triggered for most alarm arming and disarming conditions
- + The [Mac Launcher app](https://github.com/gschrader/Alarm-Server-Launcher) originally writted for the DSC version of the server works with this app.
- + "Dump Zone Timers" command is implemented but only prints debug statements for now, not added to AlarmState HTTP call yet.
- + "Zone State Change" update sent by Envisalink is implemented but only prints debug statements for now, not added to AlarmState HTTP call yet.
+ + Keypad, zone, and partition updates sent by the Envisalink as documented in the TPI are tracked by the Alarm Server and forwarded to SmartThings.
+ + SmartThings SmartApp integration lets user select which zones to track and creates SmartThings devices to represent alarm system state: contact sensors, motion sensors, and smoke sensors.
+ + Better zone status tracking by parsing keypad updates.  This works around inconsistent zone state change messages from Envisalink.
+ +
 
 #### What Doesn't Work ####
 
-+ The Web UI is not yet fully working.
-+ Zone state change messages from the TPI seem to be buggy and work sporadically, if you aren't seeing them when you should try rebooting your envisalink
++ The Web UI from AlarmServer and HoneyAlarmServer has been removed entirely.
++ No way to arm/disarm the system remotely or trigger the siren.  The idea is to use SmartThings Smart Home Monitor as the security system instead of the Vista panel alarm.
++ Zone state change messages from the TPI seem to be buggy and work sporadically, if you aren't seeing them when you should try rebooting your envisalink.
 + The Alarm state returned by the HTTP api call only returns partition state information so far (it does not return all the state expected by the Web UI)
 + Make HTTP API commands synchronous so they can return success/failure or results instead of just acknowledging the command
 
@@ -48,7 +46,7 @@ There are example plugins in the plugin-examples directory.  Copy/modify and pla
 OpenSSL Certificate Howto
 -------------------
 
-The ssl certificates that are provided are intended for demo purposes only.  
+The ssl certificates that are provided are intended for demo purposes only.
 Please use openssl to generate your own. A quick HOWTO is below.
 
 To generate a self signed cert issue the following in a command prompt:
