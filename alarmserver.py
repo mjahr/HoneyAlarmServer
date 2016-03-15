@@ -183,6 +183,7 @@ class EnvisalinkClient(LineOnlyReceiver):
         self._config = config
 
         # config smartthings
+        # TODO: use same config file as alarmserver
         self._smartthings = SmartThings("smartthings.cfg")
 
         self._commandinprogress = False
