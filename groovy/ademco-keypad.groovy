@@ -16,11 +16,11 @@ metadata {
   }
 
   tiles {
-    standardTile("keypad", "device.message", width: 2, height: 1,
-                 canChangeBackground: true, canChangeIcon: true) {
+    valueTile("keypadMessage", "device.message", width: 2, height: 1, decoration: "flat") {
+      state "message", label:'${currentValue}', backgroundColor:"#ffffff"
     }
 
-    main "keypad"
+    main "keypadMessage"
 
     // These tiles will be displayed when clicked on the device, in the order listed here.
     details(["keypad"])
