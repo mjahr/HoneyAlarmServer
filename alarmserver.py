@@ -452,6 +452,7 @@ class EnvisalinkClient(LineOnlyReceiver):
 
     def handle_zone_state_change(self, data):
         # Envisalink TPI is inconsistent at generating these
+        logging.debug("handle_zone_state_change: data='%s'" % data)
 
         # Data is an 64-bit number in hex, little endian: 8 2-char bytes.
         leHex = data
@@ -558,18 +559,29 @@ class EnvisalinkClient(LineOnlyReceiver):
 
             logMessage = ("%s (zone %i) %s" % (zoneName, zoneNumber, zoneInfo))
             logging.debug(logMessage)
-            if ALARMSTATE['zone'][zoneNumber]['status'] != zoneInfo['status']:
+
+            stateChanged = (ALARMSTATE['zone'][zoneNumber]['status'] != zoneInfo['status']);
+            if stateChanged:
                 logging.info("zone state change: " + logMessage)
 
-                # Correct lastChanged time by closedSeconds, which is 0 if open.
+                # Set lastChanged time to closedSeconds, which is 0 if open.
                 zoneInfo['lastChanged'] = self.getTimeText(
                     secondsAgo=zoneInfo['closedSeconds'])
 
-            # update zone state
-            ALARMSTATE['zone'][zoneNumber].update(zoneInfo)
+            # zone dumps seem to be buggy and falsely report zone
+            # closed; leave an error margin of 60 seconds before
+            # closing a zone.
+            if (stateChanged and zoneInfo['status'] == 'closed' and
+                zoneInfo['closedSeconds'] < 60):
+                logging.debug("ignoring zone status dump state "
+                              "change under 60 seconds")
+            else:
+                # update zone state
+                ALARMSTATE['zone'][zoneNumber].update(zoneInfo)
 
     # convert a zone dump into something humans can make sense of
     def convertZoneDump(self, theString):
+        logging.debug("converting zone dump, raw string='%s'" % theString)
         returnItems = []
 
         # every four characters
@@ -577,19 +589,19 @@ class EnvisalinkClient(LineOnlyReceiver):
         for inputItem in inputItems:
             # Swap the couples of every four bytes
             # (little endian to big endian)
-            swapedBytes = []
-            swapedBytes.insert(0, inputItem[0:2])
-            swapedBytes.insert(0, inputItem[2:4])
+            swappedBytes = []
+            swappedBytes.insert(0, inputItem[0:2])
+            swappedBytes.insert(0, inputItem[2:4])
 
-            # add swapped set of four bytes to our return items,
-            # converting from hex to int
-            itemHexString = ''.join(swapedBytes)
+            # add swapped set of four bytes to our return items
+            itemHexString = ''.join(swappedBytes)
+            # convert from hex to int
             itemInt = int(itemHexString, 16)
 
             # each value is a timer for a zone that ticks down every
             # five seconds from maxint
-            MAXINT = 65536
-            itemTicks = MAXINT - itemInt
+            maxTicks = 65536
+            itemTicks = maxTicks - itemInt
             itemSeconds = itemTicks * 5
 
             itemLastClosed = self.humanTimeAgo(timedelta(seconds=itemSeconds))
@@ -599,13 +611,15 @@ class EnvisalinkClient(LineOnlyReceiver):
                 itemLastClosed = "Currently Open"
                 itemSeconds = 0
                 status = 'open'
-            if itemHexString == "0000":
+            elif itemHexString == "0000":
                 itemLastClosed = "Last Closed longer ago than I can remember"
-                itemSeconds = -1
                 status = 'closed'
             else:
                 itemLastClosed = "Last Closed " + itemLastClosed
                 status = 'closed'
+
+            logging.debug("zone dump: index=%d raw='%s' swapped='%s' int=%d" %
+                          (len(returnItems), inputItem, itemHexString, itemInt))
 
             returnItems.append({'message': itemLastClosed, 'status': status,
                                 'closedSeconds': itemSeconds})
