@@ -53,7 +53,7 @@ class SmartThings(BaseConfig):
     def sendUpdate(self, statusMap):
         self.sendApiRequest("update", statusMap)
 
-    # TODO: sends an error to SmartThings.
+    # TODO: send an error to SmartThings.
     def sendError(self, errorState):
         message = "Envisalink became unresponsive: %s" % errorState
         # self.postPanelUpdate("ERROR", message, None)
