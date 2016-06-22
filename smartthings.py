@@ -26,18 +26,21 @@ class SmartThings(BaseConfig):
         # max number of requests to enqueue before dropping them
         self._QUEUE_SIZE  = self.read_config_var(
             'smartthings', 'queue_size', 100, 'int')
-        # Interval for posting updates when nothing has changed; default to 55 seconds.
-        self._REPEAT_UPDATE_INTERVAL  = self.read_config_var(
-            'smartthings', 'repeat_update_interval', 55, 'int')
 
         #  URL example: ${url_base}/${app_id}/update?access_token=${token}
         self._urlbase = self._CALLBACKURL_BASE + "/" + self._CALLBACKURL_APP_ID
         logging.info("SmartThings url: %s" % self._urlbase)
 
-        # keep track of the last update posted so we can skip
-        # duplicate posts
-        self._last_update_payload = ""
-        self._last_update_time = datetime.min
+        # Track recent payloads and their timestamps so we can avoid
+        # sending duplicate updates.  We track the last N updates to
+        # handle the case where multiple zones are open so the keypad
+        # cycles between several messages.  Dedup updates within the
+        # past N seconds.
+        self._cache = {}
+        # Max interval between sending duplicate updates.
+        self._REPEAT_UPDATE_INTERVAL = timedelta(
+            seconds=self.read_config_var(
+                'smartthings', 'repeat_update_interval', 55, 'int'))
 
         # set up a queue and thread to send api request asynchronously
         self._is_exiting = threading.Event()
@@ -86,6 +89,18 @@ class SmartThings(BaseConfig):
                           self._queue.qsize(), path, payload)
     ####
     # Methods used by the api thread
+    # TODO: encapsulate api thread as an object
+
+    # Add a payload to the cache, removing the oldest item if necessary.
+    def _addToCache(self, payload, timestamp):
+        # remove items older than the update interval
+        if (payload not in self._cache):
+            self._cache = { k:v for k,v in self._cache.iteritems()
+                            if timestamp - v < self._REPEAT_UPDATE_INTERVAL }
+
+        # add or update timestamp for the current payload
+        self._cache[payload] = timestamp
+        logging.debug("payload cache size is %d", len(self._cache))
 
     # Callback which runs before shutdown: signal the api thread to exit.
     def _shutdownEventHandler(self):
@@ -113,15 +128,10 @@ class SmartThings(BaseConfig):
     # Sends an api request synchronously, should only run in worker thread.
     def _postApiSynchronous(self, path, payload):
         # suppress identical updates within a specified interval.
-        # TODO: when multiple zones are open simultaneously the keypad
-        # will cycle between a handful of messages.  We should really
-        # store the last N messages within the interval and suppress
-        # updates identical to any of them.
         now = datetime.now()
-        delta = now - self._last_update_time
-        if (delta < timedelta(seconds=self._REPEAT_UPDATE_INTERVAL) and
-            payload == self._last_update_payload):
-            logging.debug("Skipping repeat update at %s seconds", delta)
+        update_delta = now - self._cache.get(payload, datetime.min)
+        if (update_delta < self._REPEAT_UPDATE_INTERVAL):
+            logging.debug("Skipping repeat update at %s seconds", update_delta)
             return
 
         try:
@@ -138,7 +148,6 @@ class SmartThings(BaseConfig):
             else:
                 logging.debug("Successfully posted smartthings api; "
                               "path=%s payload=%s", path, payload)
-                self._last_update_time = now
-                self._last_update_payload = payload
+                self._addToCache(payload, now)
         except requests.exceptions.RequestException as e:
             logging.error("Error communicating with smartthings server: " + str(e))
