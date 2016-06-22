@@ -139,31 +139,34 @@ def checkForTimeout() {
   def updateTimeStr = formatTimeDelta(updateMs)
   log.debug("Timeout check: last update was ${updateTimeStr} ago")
 
-  // compute time from last update to last notification
-  def lastNotify = state.lastTimeoutNotifyTimestamp ? state.lastTimeoutNotifyTimestamp : 0
-  def notifyMs = lastNotify - lastUpdate
-  def notifyHours = notifyMs / 1000.0 / 60.0 / 60.0
+  // Timeout after 15 minutes
+  if (updateHours > 0.25) {
+    // compute time from last update to last notification; will be
+    // negative if we haven't notified since receiving the last
+    // update.
+    def lastNotify = state.lastTimeoutNotifyTimestamp ? state.lastTimeoutNotifyTimestamp : 0
+    def notifyMs = lastNotify - lastUpdate
+    def notifyHours = notifyMs / 1000.0 / 60.0 / 60.0
 
-  // notify after 15 minutes, 1 hour, and 24 hours
-  if ((updateHours > 0.25 && notifyHours < 0.25) ||
-      (updateHours > 1.0 && notifyHours < 1.0) ||
-      (updateHours > 24.0 && notifyHours < 24.0)) {
-    sendPush("Ademco alarmserver is offline; last update was ${updateTimeStr} ago")
-    state.lastTimeoutNotifyTimestamp = now
+    // send a push after 15 minutes, and then once per hour
+    if ((int) notifyHours < (int) updateHours) {
+      sendPush("Ademco alarmserver is offline; last update was ${updateTimeStr} ago")
+      state.lastTimeoutNotifyTimestamp = now
+    }
   }
 }
 
-// Returns a time delta in ms formatted as {hh}h{mm}m{ss.uuu}s
+// Returns a time delta rounded to the nearest minute.
 def formatTimeDelta(long ms) {
-  def seconds = (double) (ms / 1000.0)
-  def minutes = (long) (seconds / 60)
-  def hours = (long) (minutes / 60)
+  def seconds = (int) Math.round(ms / 1000.0)
+  def minutes = (int) Math.round(seconds / 60.0)
+  def hours = (int) (minutes / 60)  // truncate instead of rounding
   if (seconds < 60) {
-    return sprintf("%2.3fs", seconds)
+    return sprintf("%d seconds", seconds)
   } else if (minutes < 60) {
-    return sprintf("%dm%02.3fs", minutes, seconds % 60)
+    return sprintf("%d minutes", minutes)
   } else {
-    return sprintf("%dh%02dm%02.3fs", hours, minutes % 60, seconds % 60)
+    return sprintf("%d hours %d minutes", hours, minutes)
   }
 }
 
