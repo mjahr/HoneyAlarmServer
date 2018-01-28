@@ -516,7 +516,7 @@ class EnvisalinkClient(LineOnlyReceiver):
         if len(keyDiff) > 0:
             logging.debug('Partition old status: ' + str(statusMap))
             statusMap['lastChanged'] = self.getTimeText()
-            logging.info('Partition state change: ' + str(statusMap))
+            logging.debug('Partition state change: ' + str(statusMap))
             logging.debug('Partition key diff: ' + str(keyDiff))
 
         statusMap.update(newStatus)
@@ -553,30 +553,27 @@ class EnvisalinkClient(LineOnlyReceiver):
         for zoneNumber, zoneInfo in enumerate(zoneInfoArray, start=1):
             zoneName = self._config.ZONENAMES[zoneNumber]
 
-            # skip zones we don't care about
-            if not zoneName:
+            # skip zones we don't care about or that haven't changed state
+            if (not zoneName or
+                ALARMSTATE['zone'][zoneNumber]['status'] == zoneInfo['status']):
                 continue
 
             logMessage = ("%s (zone %i) %s" % (zoneName, zoneNumber, zoneInfo))
-            logging.debug(logMessage)
 
-            stateChanged = (ALARMSTATE['zone'][zoneNumber]['status'] != zoneInfo['status']);
-            if stateChanged:
-                logging.info("zone state change: " + logMessage)
-
-                # Set lastChanged time to closedSeconds, which is 0 if open.
-                zoneInfo['lastChanged'] = self.getTimeText(
-                    secondsAgo=zoneInfo['closedSeconds'])
+            # Set lastChanged time to closedSeconds, which is 0 if open.
+            zoneInfo['lastChanged'] = self.getTimeText(
+                secondsAgo=zoneInfo['closedSeconds'])
 
             # zone dumps seem to be buggy and falsely report zone
             # closed; leave an error margin of 60 seconds before
             # closing a zone.
-            if (stateChanged and zoneInfo['status'] == 'closed' and
+            if (zoneInfo['status'] == 'closed' and
                 zoneInfo['closedSeconds'] < 60):
                 logging.debug("ignoring zone status dump state "
-                              "change under 60 seconds")
+                              "change under 60 seconds: " + logMessage)
             else:
                 # update zone state
+                logging.info("zone state change: " + logMessage)
                 ALARMSTATE['zone'][zoneNumber].update(zoneInfo)
 
     # convert a zone dump into something humans can make sense of
@@ -719,6 +716,8 @@ if __name__ == "__main__":
     if config.LOGFILE != '':
         loggingconfig['filename'] = config.LOGFILE
     logging.basicConfig(**loggingconfig)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("requests").setLevel(logging.WARNING)
 
     logging.info('AlarmServer Starting')
     logging.info('Tested on a Honeywell Vista 20p + EVL-4')
