@@ -1,12 +1,12 @@
 import json
 import logging
-import Queue
+import queue
 import requests
 import threading
-from baseConfig import BaseConfig
 from datetime import datetime
 from datetime import timedelta
 from twisted.internet import reactor
+from baseConfig import BaseConfig
 
 class SmartThings(BaseConfig):
     # read smartthings config var
@@ -44,7 +44,7 @@ class SmartThings(BaseConfig):
 
         # set up a queue and thread to send api request asynchronously
         self._is_exiting = threading.Event()
-        self._queue = Queue.Queue(self._QUEUE_SIZE)
+        self._queue = queue.Queue(self._QUEUE_SIZE)
         self._api_thread = threading.Thread(
             target=self._runApiThread, name="SmartThings api thread")
         self._api_thread.start()
@@ -76,14 +76,14 @@ class SmartThings(BaseConfig):
                             self._queue.qsize())
             try:
                 self._queue.get(block=False)
-            except Queue.Empty as e:
+            except queue.Empty as e:
                 # shouldn't get here except in some extreme race condition
                 pass
 
         try:
             self._queue.put([path, data], block=False)
             logging.debug("Enqueued smartthings api request to /%s", path)
-        except Queue.Full as e:
+        except queue.Full as e:
             logging.error("SmartThings api request failed: queue is full; "
                           "qsize=%d path=%s payload=%s",
                           self._queue.qsize(), path, payload)
@@ -95,7 +95,7 @@ class SmartThings(BaseConfig):
     def _addToCache(self, payload, timestamp):
         # remove items older than the update interval
         if (payload not in self._cache):
-            self._cache = { k:v for k,v in self._cache.iteritems()
+            self._cache = { k:v for k,v in self._cache.items()
                             if timestamp - v < self._REPEAT_UPDATE_INTERVAL }
 
         # add or update timestamp for the current payload
@@ -121,7 +121,7 @@ class SmartThings(BaseConfig):
                 if path:
                     self._postApiSynchronous(path, payload)
                 self._queue.task_done()
-            except Queue.Empty as e:
+            except queue.Empty as e:
                 pass
         logging.info("SmartThings api thread exiting")
 

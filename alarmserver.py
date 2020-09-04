@@ -14,7 +14,7 @@ import json
 import getopt
 import logging
 import re
-import urlparse
+import urllib.parse
 
 from twisted.internet import reactor
 from twisted.web.resource import Resource, NoResource
@@ -97,7 +97,7 @@ class AlarmServerConfig(BaseConfig):
 
     def initialize_alarmstate(self):
         ALARMSTATE['zone'] = {}
-        for zoneNumber in self.ZONENAMES.keys():
+        for zoneNumber in list(self.ZONENAMES.keys()):
             zoneName = self.ZONENAMES[zoneNumber]
             if not zoneName: continue
             ALARMSTATE['zone'][zoneNumber] = {
@@ -109,7 +109,7 @@ class AlarmServerConfig(BaseConfig):
             }
 
         ALARMSTATE['partition'] = {}
-        for pNumber in self.PARTITIONNAMES.keys():
+        for pNumber in list(self.PARTITIONNAMES.keys()):
             pName = self.PARTITIONNAMES[pNumber]
             if not pName: continue
             ALARMSTATE['partition'][pNumber] = {
@@ -523,7 +523,7 @@ class EnvisalinkClient(LineOnlyReceiver):
         logging.debug('Partition %d status: %s', partitionNumber, str(newStatus))
         if statusMap['ready']:
             # close all zones and send a zone status update if necessary
-            for zoneNumber, zoneInfo in ALARMSTATE['zone'].items():
+            for zoneNumber, zoneInfo in list(ALARMSTATE['zone'].items()):
                 self.updateZoneStatus(zoneNumber, 'closed')
 
     def handle_realtime_cid_event(self, data):
@@ -685,7 +685,7 @@ class AlarmServer(Resource):
 
 
 def usage():
-    print 'Usage: ' + sys.argv[0] + ' -c <configfile>'
+    print('Usage: ' + sys.argv[0] + ' -c <configfile>')
 
 
 def main(argv):
@@ -732,6 +732,6 @@ if __name__ == "__main__":
     try:
         reactor.run()
     except KeyboardInterrupt:
-        print "Crtl+C pressed. Shutting down."
+        print("Crtl+C pressed. Shutting down.")
         logging.info('Shutting down from Ctrl+C')
         sys.exit()

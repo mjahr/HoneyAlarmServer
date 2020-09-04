@@ -33,3 +33,8 @@ are device handlers which have their state managed by the SmartApp.
 To install into SmartThings, create a SmartApp with the
 "ademco-connect.groovy", and create a device handler for each of
 the sensor types: door, keypad, motion, and smoke.
+
+Dependencies
+------------
+pipenv install twisted requests
+pipenv run python3 alarmserver.py

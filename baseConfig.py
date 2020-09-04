@@ -1,9 +1,9 @@
-import ConfigParser
+import configparser
 
 
 class BaseConfig(object):
     def __init__(self, configfile):
-        self._config = ConfigParser.SafeConfigParser()
+        self._config = configparser.SafeConfigParser()
         self._config.read(configfile)
 
     def defaulting(self, section, variable, default, quiet=False):
@@ -19,6 +19,6 @@ class BaseConfig(object):
                 return self._config.getboolean(section, variable)
             elif type == 'int':
                 return self._config.getint(section, variable)
-        except (ConfigParser.NoSectionError, ConfigParser.NoOptionError):
+        except (configparser.NoSectionError, configparser.NoOptionError):
             self.defaulting(section, variable, default, quiet)
             return default
