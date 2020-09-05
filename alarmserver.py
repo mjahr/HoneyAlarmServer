@@ -201,7 +201,7 @@ class EnvisalinkClient(LineOnlyReceiver):
 
     def send_data(self, data):
         logging.debug('TX > ' + data)
-        self.sendLine(data)
+        self.sendLine(data.encode('ascii'))
 
     def check_alive(self):
         if self._loggedin:
@@ -295,7 +295,8 @@ class EnvisalinkClient(LineOnlyReceiver):
             if self._loggedin:
                 self.logout()
 
-    def lineReceived(self, input_line):
+    def lineReceived(self, input_bytes):
+        input_line = input_bytes.decode('ascii')
         if input_line != '':
             logging.debug('----------------------------------------')
             logging.debug('RX < ' + input_line)
