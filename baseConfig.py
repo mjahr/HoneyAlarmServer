@@ -1,4 +1,5 @@
 import configparser
+import logging
 
 
 class BaseConfig(object):
@@ -6,12 +7,12 @@ class BaseConfig(object):
         self._config = configparser.SafeConfigParser()
         self._config.read(configfile)
 
-    def defaulting(self, section, variable, default, quiet=False):
+    def _defaulting(self, section: str, variable: str, default: str, quiet=False):
         if quiet is False:
-            print('Config option ' + str(variable) + ' not set in [' +
-                  str(section) + '] defaulting to: \'' + str(default) + '\'')
+            logging.info('Config option %s not set in [%s] defaulting to: \'%s\'',
+                         variable, section, default)
 
-    def read_config_var(self, section, variable, default, var_type='str', quiet=False):
+    def _read_config_var(self, section, variable, default, var_type='str', quiet=False):
         try:
             if var_type == 'str':
                 return self._config.get(section, variable)
@@ -20,5 +21,19 @@ class BaseConfig(object):
             elif var_type == 'int':
                 return self._config.getint(section, variable)
         except (configparser.NoSectionError, configparser.NoOptionError):
-            self.defaulting(section, variable, default, quiet)
+            self._defaulting(section, variable, default, quiet)
+            return default
+
+    def get_str(self, section: str, variable: str, default: str, quiet: bool = False) -> str:
+        try:
+            return self._config.get(section, variable)
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            self._defaulting(section, variable, default, quiet)
+            return default
+
+    def get_int(self, section: str, variable: str, default: int, quiet: bool = False) -> int:
+        try:
+            return self._config.getint(section, variable)
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            self._defaulting(section, variable, str(default), quiet)
             return default

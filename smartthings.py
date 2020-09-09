@@ -1,42 +1,45 @@
 import json
 import logging
 import queue
-import requests
 import threading
 from datetime import datetime
 from datetime import timedelta
+from typing import Dict, Mapping
+
+import requests
 from twisted.internet import reactor
+
 from baseConfig import BaseConfig
 
 
 class SmartThings:
-    def __init__(self, config):
-        self._config = config
-        self._CALLBACKURL_BASE = self._read_st_config_var('callbackurl_base')
-        self._CALLBACKURL_APP_ID = self._read_st_config_var('callbackurl_app_id')
-        self._CALLBACKURL_ACCESS_TOKEN = self._read_st_config_var('callbackurl_access_token')
+    def __init__(self, config: BaseConfig):
+        self._config: BaseConfig = config
+        self._CALLBACKURL_BASE: str = self._get_config_str('callbackurl_base')
+        self._CALLBACKURL_APP_ID: str = self._get_config_str('callbackurl_app_id')
+        self._CALLBACKURL_ACCESS_TOKEN: str = self._get_config_str('callbackurl_access_token')
         # http timeout in seconds for api requests
-        self._API_TIMEOUT = self._read_config_var('api_timeout', 10, 'int')
+        self._API_TIMEOUT: int = self._get_config_int('api_timeout', 10)
         # max number of requests to enqueue before dropping them
-        self._QUEUE_SIZE = self._read_config_var('queue_size', 100, 'int')
+        self._QUEUE_SIZE: int = self._get_config_int('queue_size', 100)
 
         #  URL example: ${url_base}/${app_id}/update?access_token=${token}
-        self._urlbase = self._CALLBACKURL_BASE + "/" + self._CALLBACKURL_APP_ID
-        logging.info("SmartThings url: %s" % self._urlbase)
+        self._urlbase: str = self._CALLBACKURL_BASE + "/" + self._CALLBACKURL_APP_ID
+        logging.info("SmartThings url: %s", self._urlbase)
 
         # Track recent payloads and their timestamps so we can avoid
         # sending duplicate updates.  We track the last N updates to
         # handle the case where multiple zones are open so the keypad
         # cycles between several messages.  Dedup updates within the
         # past N seconds.
-        self._cache = {}
+        self._cache: Dict[str, datetime] = {}
         # Max interval between sending duplicate updates.
         self._REPEAT_UPDATE_INTERVAL = timedelta(
-            seconds=self._read_config_var('repeat_update_interval', 55, 'int'))
+            seconds=self._get_config_int('repeat_update_interval', 55))
 
         # set up a queue and thread to send api request asynchronously
         self._is_exiting = threading.Event()
-        self._queue = queue.Queue(self._QUEUE_SIZE)
+        self._queue: queue.Queue = queue.Queue(self._QUEUE_SIZE)
         self._api_thread = threading.Thread(
             target=self._run_api_thread, name="SmartThings api thread")
         self._api_thread.start()
@@ -45,11 +48,11 @@ class SmartThings:
             'before', 'shutdown', self._shutdown_event_handler)
 
     # Sends a regular polling update to SmartThings.
-    def send_update(self, status_map):
-        self.send_api_request("update", status_map)
+    def send_update(self, alarmserver_state: Mapping):
+        self.send_api_request("update", alarmserver_state)
 
     # TODO: send an error to SmartThings.
-    def send_error(self, error_state):
+    def send_error(self, error_state: str):
         # message = "Envisalink became unresponsive: %s" % error_state
         # self.postPanelUpdate("ERROR", message, None)
         pass
@@ -57,7 +60,7 @@ class SmartThings:
     # Send an api request to SmartThings, asynchronously.
     # path: relative to self._urlbase
     # payload: dict used as body of the post, json-encoded.
-    def send_api_request(self, path, payload):
+    def send_api_request(self, path: str, payload):
         # because we're sending this asynchronously, dump the payload
         # to a string so it's not affected by future updates
         data = json.dumps(payload)
@@ -81,19 +84,19 @@ class SmartThings:
                           "qsize=%d path=%s payload=%s",
                           self._queue.qsize(), path, payload)
 
-    def _read_config_var(self, variable, default, var_type='str'):
-        return self._config.read_config_var('smartthings', variable, default, var_type)
+    def _get_config_int(self, variable: str, default: int) -> int:
+        return self._config.get_int('smartthings', variable, default)
 
     # read smartthings config var
-    def _read_st_config_var(self, varname):
-        return self._read_config_var(varname, 'not_provided', 'str')
+    def _get_config_str(self, varname: str) -> str:
+        return self._config.get_str('smartthings', varname, 'not_provided')
 
     ####
     # Methods used by the api thread
     # TODO: encapsulate api thread as an object
 
     # Add a payload to the cache, removing the oldest item if necessary.
-    def _add_to_cache(self, payload, timestamp):
+    def _add_to_cache(self, payload: str, timestamp: datetime):
         # remove items older than the update interval
         if payload not in self._cache:
             self._cache = {k: v for k, v in self._cache.items()
@@ -127,7 +130,7 @@ class SmartThings:
         logging.info("SmartThings api thread exiting")
 
     # Sends an api request synchronously, should only run in worker thread.
-    def _post_api_synchronous(self, path, payload):
+    def _post_api_synchronous(self, path: str, payload: str):
         # suppress identical updates within a specified interval.
         now = datetime.now()
         update_delta = now - self._cache.get(payload, datetime.min)
@@ -150,5 +153,5 @@ class SmartThings:
                 logging.debug("Successfully posted smartthings api; "
                               "path=%s payload=%s", path, payload)
                 self._add_to_cache(payload, now)
-        except requests.exceptions.RequestException as e:
-            logging.error("Error communicating with smartthings server: " + str(e))
+        except requests.exceptions.RequestException as err:
+            logging.error("Error communicating with smartthings server: %s", str(err))

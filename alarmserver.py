@@ -8,87 +8,61 @@
 #
 # This code is under the terms of the GPL v3 license.
 
-import sys
 import getopt
 import logging
 import re
-
-from twisted.internet import reactor
-from twisted.web.resource import Resource
-from twisted.protocols.basic import LineOnlyReceiver
-from twisted.internet.task import LoopingCall
-from twisted.internet.protocol import ReconnectingClientFactory
-from twisted.python import log
-
-from envisalinkdefs import *
-from baseConfig import BaseConfig
-from smartthings import SmartThings
+import sys
 from datetime import datetime
 from datetime import timedelta
+from typing import Dict, Any
 
-ALARMSTATE = {}
-MAXPARTITIONS = 16
-MAXZONES = 128
-MAXALARMUSERS = 47
-SHUTTINGDOWN = False
+from twisted.internet import reactor
+from twisted.internet.protocol import ReconnectingClientFactory
+from twisted.internet.task import LoopingCall
+from twisted.protocols.basic import LineOnlyReceiver
+from twisted.python import log
+from twisted.web.resource import Resource
+
+from baseConfig import BaseConfig
+from envisalinkdefs import *
+from smartthings import SmartThings
+
+AlarmState = Dict[str, Dict[int, Dict[str, Any]]]
+ALARMSTATE: AlarmState = {}
+MAXPARTITIONS: int = 16
+MAXZONES: int = 128
+MAXALARMUSERS: int = 47
+SHUTTINGDOWN: bool = False
 
 
 class AlarmServerConfig(BaseConfig):
-    def __init__(self, configfile):
+    def __init__(self, configfile: str):
         # call ancestor for common setup
         super(self.__class__, self).__init__(configfile)
 
-        self.ENVISALINKHOST = self.read_config_var('envisalink',
-                                                   'host',
-                                                   'envisalink', 'str')
-        self.ENVISALINKPORT = self.read_config_var('envisalink',
-                                                   'port',
-                                                   4025, 'int')
-        self.ENVISALINKPASS = self.read_config_var('envisalink',
-                                                   'pass',
-                                                   'user', 'str')
-        self.ENVISAPOLLINTERVAL = self.read_config_var('envisalink',
-                                                       'pollinterval',
-                                                       0, 'int')
-        self.ENVISAZONEDUMPINTERVAL = self.read_config_var('envisalink',
-                                                           'zonedumpinterval',
-                                                           60, 'int')
-        self.ENVISAKEYPADUPDATEINTERVAL = self.read_config_var('envisalink',
-                                                               'keypadupdateinterval',
-                                                               60, 'int')
-        self.ENVISACOMMANDTIMEOUT = self.read_config_var('envisalink',
-                                                         'commandtimeout',
-                                                         30, 'int')
-        self.ENVISAKPEVENTTIMEOUT = self.read_config_var('envisalink',
-                                                         'kpeventtimeout',
-                                                         45, 'int')
-        self.ALARMCODE = self.read_config_var('envisalink',
-                                              'alarmcode',
-                                              1111, 'int')
-        self.LOGFILE = self.read_config_var('alarmserver',
-                                            'logfile',
-                                            '', 'str')
-        self.LOGLEVEL = self.read_config_var('alarmserver',
-                                             'loglevel',
-                                             'DEBUG', 'str')
+        self.ENVISALINKHOST = self.get_str('envisalink', 'host', 'envisalink')
+        self.ENVISALINKPORT = self.get_int('envisalink', 'port', 4025)
+        self.ENVISALINKPASS = self.get_str('envisalink', 'pass', 'user')
+        self.ENVISAPOLLINTERVAL = self.get_int('envisalink', 'pollinterval', 0)
+        self.ENVISAZONEDUMPINTERVAL = self.get_int('envisalink', 'zonedumpinterval', 60)
+        self.ENVISAKEYPADUPDATEINTERVAL = self.get_int('envisalink', 'keypadupdateinterval', 60)
+        self.ENVISACOMMANDTIMEOUT = self.get_int('envisalink', 'commandtimeout', 30)
+        self.ENVISAKPEVENTTIMEOUT = self.get_int('envisalink', 'kpeventtimeout', 45)
+        self.ALARMCODE = self.get_int('envisalink', 'alarmcode', 1111)
+        self.LOGFILE = self.get_str('alarmserver', 'logfile', '')
+        self.LOGLEVEL = self.get_str('alarmserver', 'loglevel', 'DEBUG')
 
-        self.PARTITIONNAMES = {}
+        self.PARTITIONNAMES: Dict[int, str] = {}
         for i in range(1, MAXPARTITIONS + 1):
-            self.PARTITIONNAMES[i] = self.read_config_var('alarmserver',
-                                                          'partition' + str(i),
-                                                          False, 'str', True)
+            self.PARTITIONNAMES[i] = self.get_str('alarmserver', 'partition' + str(i), 'False', True)
 
-        self.ZONENAMES = {}
+        self.ZONENAMES: Dict[int, str] = {}
         for i in range(1, MAXZONES + 1):
-            self.ZONENAMES[i] = self.read_config_var('alarmserver',
-                                                     'zone' + str(i),
-                                                     False, 'str', True)
+            self.ZONENAMES[i] = self.get_str('alarmserver', 'zone' + str(i), 'False', True)
 
-        self.ALARMUSERNAMES = {}
+        self.ALARMUSERNAMES: Dict[int, str] = {}
         for i in range(1, MAXALARMUSERS + 1):
-            self.ALARMUSERNAMES[i] = self.read_config_var('alarmserver',
-                                                          'user' + str(i),
-                                                          False, 'str', True)
+            self.ALARMUSERNAMES[i] = self.get_str('alarmserver', 'user' + str(i), 'False', True)
 
     def initialize_alarmstate(self):
         ALARMSTATE['zone'] = {}
@@ -131,11 +105,11 @@ class AlarmServerConfig(BaseConfig):
 
 
 class EnvisalinkClientFactory(ReconnectingClientFactory):
-    def __init__(self, in_config):
-        self._config = in_config
+    def __init__(self, in_config: AlarmServerConfig):
+        self._config: AlarmServerConfig = in_config
+        self._smartthings: SmartThings = SmartThings(in_config)
         self._envisalinkClient = None
         self._currentLoopingCall = None
-        self._smartthings = SmartThings(self._config)
 
     def buildProtocol(self, addr):
         logging.debug("%s connection established to %s:%s", addr.type, addr.host, addr.port)
@@ -172,16 +146,14 @@ class EnvisalinkClientFactory(ReconnectingClientFactory):
 
 
 class EnvisalinkClient(LineOnlyReceiver):
-    def __init__(self, in_config, smartthings):
+    def __init__(self, in_config: AlarmServerConfig, smartthings: SmartThings):
         # Are we logged in?
         self._loggedin = False
 
         self._has_partition_state_changed = False
 
-        # Set config
+        # Set config and smartthings
         self._config = in_config
-
-        # config smartthings
         self._smartthings = smartthings
 
         self._commandinprogress = False
@@ -277,8 +249,7 @@ class EnvisalinkClient(LineOnlyReceiver):
     def keypresses_to_partition(self, partition_num, keypresses):
         for char in keypresses:
             to_send = '^03,' + str(partition_num) + ',' + char + '$'
-            logging.debug('TX > ' + to_send)
-            self.sendLine(to_send)
+            self.send_data(to_send)
 
     # network communication callbacks
 
@@ -431,7 +402,7 @@ class EnvisalinkClient(LineOnlyReceiver):
             # Send update to SmartThings
             self._smartthings.send_update(ALARMSTATE)
 
-    def update_zone_status(self, zone_num, zone_status):
+    def update_zone_status(self, zone_num: int, zone_status: str):
         zone_name = self._config.ZONENAMES[zone_num]
         # only bother to update if zone name is defined in config
         if not zone_name:
@@ -619,7 +590,7 @@ class EnvisalinkClient(LineOnlyReceiver):
                           (len(return_items), inputItem, item_hex_string, item_int))
 
             return_items.append({'message': item_last_closed, 'status': status,
-                                'closedSeconds': item_seconds})
+                                 'closedSeconds': item_seconds})
         return return_items
 
     # public domain from https://pypi.python.org/pypi/ago/0.0.6
@@ -710,16 +681,21 @@ if __name__ == "__main__":
     main(sys.argv[1:])
 
     print('Using configuration file %s' % conffile)
-    config = AlarmServerConfig(conffile)
-    loggingconfig = {
-        'level': config.LOGLEVEL,
+    alarm_config = AlarmServerConfig(conffile)
+    loggingconfig: Dict[str, Any] = {
+        'level': alarm_config.LOGLEVEL,
         'format': '%(asctime)s %(levelname)s <%(name)s %(module)s %(funcName)s> %(message)s',
-        'datefmt': '%Y-%m-%d %H:%M:%S'}
-    if config.LOGFILE != '':
-        loggingconfig['filename'] = config.LOGFILE
+        'datefmt': '%Y-%m-%d %H:%M:%S',
+        # force re-init because AlarmServerConfig may have already initialized default logging
+        'force': True}
+    if alarm_config.LOGFILE != '':
+        loggingconfig['filename'] = alarm_config.LOGFILE
     logging.basicConfig(**loggingconfig)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
+
+    # re-parse config for logging
+    alarm_config = AlarmServerConfig(conffile)
 
     logging.info('AlarmServer Starting')
     logging.info('Tested on a Honeywell Vista 20p + EVL-4')
@@ -728,8 +704,8 @@ if __name__ == "__main__":
     observer = log.PythonLoggingObserver()
     observer.start()
 
-    config.initialize_alarmstate()
-    AlarmServer(config)
+    alarm_config.initialize_alarmstate()
+    AlarmServer(alarm_config)
 
     try:
         reactor.run()
