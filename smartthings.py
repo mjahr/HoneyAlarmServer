@@ -9,24 +9,16 @@ from twisted.internet import reactor
 from baseConfig import BaseConfig
 
 
-class SmartThings(BaseConfig):
-    # read smartthings config var
-    def read_st_config_var(self, varname):
-        return self.read_config_var('smartthings', varname, 'not_provided', 'str')
-
-    def __init__(self, configfile):
-        # call ancestor for common setup
-        super(SmartThings, self).__init__(configfile)
-
-        self._CALLBACKURL_BASE = self.read_st_config_var('callbackurl_base')
-        self._CALLBACKURL_APP_ID = self.read_st_config_var('callbackurl_app_id')
-        self._CALLBACKURL_ACCESS_TOKEN = self.read_st_config_var('callbackurl_access_token')
+class SmartThings:
+    def __init__(self, config):
+        self._config = config
+        self._CALLBACKURL_BASE = self._read_st_config_var('callbackurl_base')
+        self._CALLBACKURL_APP_ID = self._read_st_config_var('callbackurl_app_id')
+        self._CALLBACKURL_ACCESS_TOKEN = self._read_st_config_var('callbackurl_access_token')
         # http timeout in seconds for api requests
-        self._API_TIMEOUT = self.read_config_var(
-            'smartthings', 'api_timeout', 10, 'int')
+        self._API_TIMEOUT = self._read_config_var('api_timeout', 10, 'int')
         # max number of requests to enqueue before dropping them
-        self._QUEUE_SIZE = self.read_config_var(
-            'smartthings', 'queue_size', 100, 'int')
+        self._QUEUE_SIZE = self._read_config_var('queue_size', 100, 'int')
 
         #  URL example: ${url_base}/${app_id}/update?access_token=${token}
         self._urlbase = self._CALLBACKURL_BASE + "/" + self._CALLBACKURL_APP_ID
@@ -40,8 +32,7 @@ class SmartThings(BaseConfig):
         self._cache = {}
         # Max interval between sending duplicate updates.
         self._REPEAT_UPDATE_INTERVAL = timedelta(
-            seconds=self.read_config_var(
-                'smartthings', 'repeat_update_interval', 55, 'int'))
+            seconds=self._read_config_var('repeat_update_interval', 55, 'int'))
 
         # set up a queue and thread to send api request asynchronously
         self._is_exiting = threading.Event()
@@ -89,6 +80,13 @@ class SmartThings(BaseConfig):
             logging.error("SmartThings api request failed: queue is full; "
                           "qsize=%d path=%s payload=%s",
                           self._queue.qsize(), path, payload)
+
+    def _read_config_var(self, variable, default, var_type='str'):
+        return self._config.read_config_var('smartthings', variable, default, var_type)
+
+    # read smartthings config var
+    def _read_st_config_var(self, varname):
+        return self._read_config_var(varname, 'not_provided', 'str')
 
     ####
     # Methods used by the api thread

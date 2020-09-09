@@ -135,12 +135,13 @@ class EnvisalinkClientFactory(ReconnectingClientFactory):
         self._config = in_config
         self._envisalinkClient = None
         self._currentLoopingCall = None
+        self._smartthings = SmartThings(self._config)
 
     def buildProtocol(self, addr):
         logging.debug("%s connection established to %s:%s", addr.type, addr.host, addr.port)
         logging.debug("resetting connection delay")
         self.resetDelay()
-        self._envisalinkClient = EnvisalinkClient(self._config)
+        self._envisalinkClient = EnvisalinkClient(self._config, self._smartthings)
 
         # check on the state of the envisalink connection repeatedly
         self._currentLoopingCall = LoopingCall(self._envisalinkClient.check_alive)
@@ -171,7 +172,7 @@ class EnvisalinkClientFactory(ReconnectingClientFactory):
 
 
 class EnvisalinkClient(LineOnlyReceiver):
-    def __init__(self, in_config):
+    def __init__(self, in_config, smartthings):
         # Are we logged in?
         self._loggedin = False
 
@@ -181,7 +182,7 @@ class EnvisalinkClient(LineOnlyReceiver):
         self._config = in_config
 
         # config smartthings
-        self._smartthings = SmartThings("alarmserver.cfg")
+        self._smartthings = smartthings
 
         self._commandinprogress = False
         now = datetime.now()
@@ -423,8 +424,8 @@ class EnvisalinkClient(LineOnlyReceiver):
             logging.debug("keypad_update: zone %s status %s", user_or_zone, new_status)
             # Update zone status if the keypad is reporting a fault.
             if alpha.startswith("FAULT") and not flags.ready:
-                zoneNumber = int(user_or_zone)
-                self.update_zone_status(zoneNumber, "open")
+                zone_number = int(user_or_zone)
+                self.update_zone_status(zone_number, "open")
             self.set_partition_status(partition_num, new_status)
 
             # Send update to SmartThings
