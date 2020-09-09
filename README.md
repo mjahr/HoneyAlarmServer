@@ -36,5 +36,5 @@ the sensor types: door, keypad, motion, and smoke.
 
 Dependencies
 ------------
-pipenv install twisted requests
-pipenv run python3 alarmserver.py
+    pipenv install twisted requests
+    pipenv run python3 alarmserver.py
