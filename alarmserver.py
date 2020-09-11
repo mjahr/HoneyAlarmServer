@@ -694,9 +694,6 @@ if __name__ == "__main__":
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
 
-    # re-parse config for logging
-    alarm_config = AlarmServerConfig(conffile)
-
     logging.info('AlarmServer Starting')
     logging.info('Tested on a Honeywell Vista 20p + EVL-4')
 
