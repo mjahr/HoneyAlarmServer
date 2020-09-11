@@ -700,7 +700,7 @@ if __name__ == "__main__":
     observer.start()
 
     alarm_config.initialize_alarmstate()
-    AlarmServer(alarm_config)
+    alarm_server = AlarmServer(alarm_config)
 
     try:
         reactor.run()

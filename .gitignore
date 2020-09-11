@@ -1,6 +1,7 @@
 *.pyc
 
 alarmserver.cfg
+alarmserver.log
 output.log
 indigoPlugin.cfg
 sssPlugin.cfg
