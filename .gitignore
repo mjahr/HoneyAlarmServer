@@ -8,6 +8,7 @@ sssPlugin.cfg
 sample CID.txt
 pushoverPlugin.cfg
 plugins/*
+.idea
 !plugins/__init__.py
 !plugins/basePlugin.py
 todo
