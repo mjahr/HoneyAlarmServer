@@ -9,8 +9,8 @@ class BaseConfig(object):
     def _defaulting(self, section: str, variable: str, default: str, quiet=False):
         if quiet is False:
             # can't use logging because we parse config before initializing logging
-            print('Config option %s not set in [%s] defaulting to: \'%s\'',
-                  variable, section, default)
+            print('Config option %s not set in [%s] defaulting to: \'%s\'' %
+                  (variable, section, default))
 
     def get_str(self, section: str, variable: str, default: str, quiet: bool = False) -> str:
         try:
