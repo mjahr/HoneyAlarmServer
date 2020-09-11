@@ -685,9 +685,7 @@ if __name__ == "__main__":
     loggingconfig: Dict[str, Any] = {
         'level': alarm_config.LOGLEVEL,
         'format': '%(asctime)s %(levelname)s <%(name)s %(module)s %(funcName)s> %(message)s',
-        'datefmt': '%Y-%m-%d %H:%M:%S',
-        # force re-init because AlarmServerConfig may have already initialized default logging
-        'force': True}
+        'datefmt': '%Y-%m-%d %H:%M:%S'}
     if alarm_config.LOGFILE != '':
         loggingconfig['filename'] = alarm_config.LOGFILE
     logging.basicConfig(**loggingconfig)
