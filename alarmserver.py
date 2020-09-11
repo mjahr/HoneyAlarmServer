@@ -54,15 +54,15 @@ class AlarmServerConfig(BaseConfig):
 
         self.PARTITIONNAMES: Dict[int, str] = {}
         for i in range(1, MAXPARTITIONS + 1):
-            self.PARTITIONNAMES[i] = self.get_str('alarmserver', 'partition' + str(i), 'False', True)
+            self.PARTITIONNAMES[i] = self.get_str('alarmserver', 'partition' + str(i), '', True)
 
         self.ZONENAMES: Dict[int, str] = {}
         for i in range(1, MAXZONES + 1):
-            self.ZONENAMES[i] = self.get_str('alarmserver', 'zone' + str(i), 'False', True)
+            self.ZONENAMES[i] = self.get_str('alarmserver', 'zone' + str(i), '', True)
 
         self.ALARMUSERNAMES: Dict[int, str] = {}
         for i in range(1, MAXALARMUSERS + 1):
-            self.ALARMUSERNAMES[i] = self.get_str('alarmserver', 'user' + str(i), 'False', True)
+            self.ALARMUSERNAMES[i] = self.get_str('alarmserver', 'user' + str(i), '', True)
 
     def initialize_alarmstate(self):
         ALARMSTATE['zone'] = {}
